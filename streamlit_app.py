@@ -10,8 +10,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-# استيراد المتزامن من تيليثون
 from telethon.sync import TelegramClient
+from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from telethon.tl.types import (
     MessageMediaDocument, MessageMediaPhoto, DocumentAttributeVideo,
@@ -25,7 +25,6 @@ except ImportError:
     _HAS_IMAGEHASH = False
 
 # ================== تهيئة event loop للخيط الرئيسي ==================
-# هذا يحل مشكلة "no current event loop" عند استخدام telethon.sync
 try:
     asyncio.get_event_loop()
 except RuntimeError:
@@ -117,6 +116,12 @@ def extract_file_info(client, msg, compute_md5, compute_phash):
     info["md5"], info["phash"] = compute_hashes(client, msg, info, compute_md5, compute_phash)
     return info
 
+# ================== دالة مساعدة لإنشاء الكلاينت ==================
+def make_client(api_id, api_hash, session_string=None):
+    """ينشئ TelegramClient باستخدام StringSession لضمان استمرارية الجلسة"""
+    session = StringSession(session_string) if session_string else StringSession()
+    return TelegramClient(session, int(api_id), api_hash)
+
 # ================== قاعدة البيانات ==================
 class Database:
     def __init__(self, path):
@@ -165,6 +170,12 @@ if 'selected_ids' not in st.session_state: st.session_state.selected_ids = set()
 if 'auto_mode' not in st.session_state: st.session_state.auto_mode = False
 if 'total_scanned' not in st.session_state: st.session_state.total_scanned = 0
 if 'files_saved' not in st.session_state: st.session_state.files_saved = 0
+# ✅ إضافة: حفظ phone_code_hash و session_string
+if 'phone_code_hash' not in st.session_state: st.session_state.phone_code_hash = None
+if 'session_string' not in st.session_state: st.session_state.session_string = None
+if 'api_id' not in st.session_state: st.session_state.api_id = None
+if 'api_hash' not in st.session_state: st.session_state.api_hash = None
+if 'phone' not in st.session_state: st.session_state.phone = None
 
 # ================== واجهة المستخدم ==================
 st.title("🦖 Telegram Duplicate Surgeon")
@@ -180,15 +191,25 @@ if st.session_state.step == 'login':
                 st.error("جميع الحقول مطلوبة")
             else:
                 try:
-                    client = TelegramClient("streamlit_session", int(api_id), api_hash)
+                    # ✅ إصلاح: استخدام StringSession بدلاً من ملف جلسة ثابت
+                    client = make_client(api_id, api_hash)
                     client.connect()
                     if not client.is_user_authorized():
-                        client.send_code_request(phone)
-                        st.session_state.client = client
+                        # ✅ إصلاح: حفظ phone_code_hash من send_code_request
+                        sent = client.send_code_request(phone)
+                        # ✅ حفظ string session حتى لا تضيع الجلسة
+                        st.session_state.session_string = client.session.save()
+                        st.session_state.phone_code_hash = sent.phone_code_hash
+                        st.session_state.api_id = api_id
+                        st.session_state.api_hash = api_hash
                         st.session_state.phone = phone
+                        st.session_state.client = client
                         st.session_state.step = 'verify_code'
                         st.rerun()
                     else:
+                        st.session_state.session_string = client.session.save()
+                        st.session_state.api_id = api_id
+                        st.session_state.api_hash = api_hash
                         st.session_state.client = client
                         st.session_state.step = 'channel'
                         st.rerun()
@@ -198,23 +219,66 @@ if st.session_state.step == 'login':
 elif st.session_state.step == 'verify_code':
     with st.form("verify_form"):
         st.subheader("📲 تأكيد الحساب")
+        st.info("تم إرسال رمز التحقق إلى تيليجرام، أدخله هنا.")
         code = st.text_input("رمز OTP*")
         password = st.text_input("كلمة مرور 2FA (إن وجدت)", type="password")
         if st.form_submit_button("تأكيد"):
-            client = st.session_state.client
             try:
-                client.sign_in(st.session_state.phone, code)
+                # ✅ إصلاح: إعادة بناء الكلاينت من session_string المحفوظ
+                client = make_client(
+                    st.session_state.api_id,
+                    st.session_state.api_hash,
+                    st.session_state.session_string
+                )
+                client.connect()
+                # ✅ إصلاح: تمرير phone_code_hash مع sign_in
+                client.sign_in(
+                    st.session_state.phone,
+                    code,
+                    phone_code_hash=st.session_state.phone_code_hash
+                )
+                st.session_state.session_string = client.session.save()
+                st.session_state.client = client
                 st.session_state.step = 'channel'
                 st.rerun()
             except SessionPasswordNeededError:
-                if not password: st.error("الحساب محمي بكلمة مرور، الرجاء إدخالها")
+                if not password:
+                    st.error("الحساب محمي بكلمة مرور 2FA، الرجاء إدخالها")
                 else:
                     try:
+                        client = make_client(
+                            st.session_state.api_id,
+                            st.session_state.api_hash,
+                            st.session_state.session_string
+                        )
+                        client.connect()
                         client.sign_in(password=password)
+                        st.session_state.session_string = client.session.save()
+                        st.session_state.client = client
                         st.session_state.step = 'channel'
                         st.rerun()
-                    except Exception as e: st.error(f"كلمة مرور غير صحيحة: {e}")
-            except Exception as e: st.error(f"رمز غير صحيح: {e}")
+                    except Exception as e:
+                        st.error(f"كلمة مرور غير صحيحة: {e}")
+            except Exception as e:
+                st.error(f"رمز غير صحيح: {e}")
+
+    # زر إعادة إرسال الرمز
+    st.markdown("---")
+    if st.button("🔄 إعادة إرسال الرمز"):
+        try:
+            client = make_client(
+                st.session_state.api_id,
+                st.session_state.api_hash,
+                st.session_state.session_string
+            )
+            client.connect()
+            sent = client.send_code_request(st.session_state.phone)
+            st.session_state.phone_code_hash = sent.phone_code_hash
+            st.session_state.session_string = client.session.save()
+            st.session_state.client = client
+            st.success("✅ تم إعادة إرسال الرمز")
+        except Exception as e:
+            st.error(f"خطأ: {e}")
 
 elif st.session_state.step == 'channel':
     st.success("✅ تم تسجيل الدخول")
@@ -257,11 +321,11 @@ elif st.session_state.step == 'scanning':
     db = Database(st.session_state.db_path)
     last_id, _, _ = db.get_resume_state(channel.id)
     offset_id = 0 if last_id == 0 else last_id + 1
-    
+
     col1, col2 = st.columns(2)
     with col1: st.metric("📊 تم فحص", st.session_state.total_scanned)
     with col2: st.metric("💾 تم حفظ", st.session_state.files_saved)
-    
+
     if st.button("فحص الدفعة التالية" if not st.session_state.auto_mode else "▶️ استمرار آلي", type="primary"):
         client = st.session_state.client
         progress = st.progress(0)
@@ -292,11 +356,11 @@ elif st.session_state.step == 'scanning':
             st.error(f"خطأ: {e}")
         finally:
             db.close()
-    
+
     if st.button("📋 عرض المكررات"):
         st.session_state.step = 'results'
         st.rerun()
-    
+
     with open(st.session_state.db_path, "rb") as f:
         st.download_button("📥 تحميل قاعدة البيانات", f, file_name=f"scan_{channel.id}.db")
 
@@ -305,7 +369,7 @@ elif st.session_state.step == 'results':
     channel = st.session_state.channel
     db = Database(st.session_state.db_path)
     duplicates = db.stream_duplicates(channel.id, params['keep_strategy'], int(params['min_size_mb']*1024*1024))
-    
+
     if not duplicates:
         st.success("🎉 لا توجد مكررات!")
     else:
@@ -315,7 +379,7 @@ elif st.session_state.step == 'results':
         df = pd.DataFrame([{"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']), "تحديد": False} for d in page_duplicates])
         edited = st.data_editor(df, column_config={"تحديد": st.column_config.CheckboxColumn("🗑️")}, hide_index=True)
         for sid in edited[edited["تحديد"] == True]["معرف"].tolist(): st.session_state.selected_ids.add(sid)
-        
+
         if st.button("🗑️ حذف المحدد", type="primary"):
             if params['dry_run']:
                 st.info(f"معاينة: حذف {len(st.session_state.selected_ids)}")
