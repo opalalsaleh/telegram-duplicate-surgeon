@@ -7,10 +7,8 @@ import sqlite3
 import tempfile
 import time
 import threading
-from typing import Optional
 
 import pandas as pd
-# ✅ نستخدم telethon العادي (async) مو telethon.sync
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
@@ -24,29 +22,6 @@ try:
 except ImportError:
     _HAS_IMAGEHASH = False
 
-# ================== Loop خلفي ثابت ==================
-# ننشئ loop واحد بـ thread منفصل ويبقى شغال طول عمر التطبيق
-# هاد يحل مشكلة "event loop must not change" مع Streamlit
-
-_BG_LOOP: Optional[asyncio.AbstractEventLoop] = None
-_BG_THREAD: Optional[threading.Thread] = None
-_LOOP_LOCK = threading.Lock()
-
-def get_bg_loop() -> asyncio.AbstractEventLoop:
-    global _BG_LOOP, _BG_THREAD
-    with _LOOP_LOCK:
-        if _BG_LOOP is None or _BG_LOOP.is_closed():
-            _BG_LOOP = asyncio.new_event_loop()
-            _BG_THREAD = threading.Thread(target=_BG_LOOP.run_forever, daemon=True, name="TelegramLoop")
-            _BG_THREAD.start()
-    return _BG_LOOP
-
-def run_sync(coro):
-    """شغّل coroutine على الـ loop الخلفي وانتظر النتيجة (blocking)"""
-    loop = get_bg_loop()
-    future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result(timeout=120)
-
 # ================== تهيئة الصفحة ==================
 st.set_page_config(page_title="Telegram Duplicate Surgeon", page_icon="🦖", layout="wide")
 st.html("""
@@ -59,16 +34,33 @@ st.html("""
 </style>
 """)
 
+# ================== Loop ثابت محفوظ في session_state ==================
+# ✅ الحل الصح: نحفظ الـ loop والـ thread في session_state
+# لأن المتغيرات العامة بتتصفر مع كل re-run على Streamlit Cloud
+# لكن session_state بيبقى طول الجلسة
+
+if '_bg_loop' not in st.session_state:
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True, name="TelegramLoop")
+    t.start()
+    st.session_state._bg_loop = loop
+    st.session_state._bg_thread = t
+
+def run_sync(coro):
+    """شغّل coroutine على الـ loop الثابت وانتظر النتيجة"""
+    loop = st.session_state._bg_loop
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result(timeout=120)
+
 # ================== الثوابت ==================
-BATCH_SCAN_SIZE = 50
+BATCH_SCAN_SIZE   = 50
 BATCH_DELETE_SIZE = 25
-MD5_SIZE_LIMIT   = 5 * 1024 * 1024
-PAGE_SIZE        = 50
+PAGE_SIZE         = 50
 
 # ================== دوال مساعدة ==================
 def fmt_size(n: int) -> str:
     if n == 0: return "0 B"
-    for u in ("B","KB","MB","GB","TB"):
+    for u in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024: return f"{n:.1f} {u}"
         n /= 1024
     return f"{n:.1f} PB"
@@ -93,6 +85,17 @@ async def _is_authorized(client):
     return await client.is_user_authorized()
 
 async def _get_entity(client, channel_input):
+    # ✅ يدعم invite links من نوع https://t.me/+xxxx
+    if channel_input.startswith("https://t.me/+") or channel_input.startswith("https://t.me/joinchat/"):
+        # نستخدم check_invite بدل get_entity للروابط الخاصة
+        hash_part = channel_input.split("/+")[-1] if "/+" in channel_input else channel_input.split("/joinchat/")[-1]
+        result = await client(
+            __import__('telethon.tl.functions.messages', fromlist=['CheckChatInviteRequest']).CheckChatInviteRequest(hash_part)
+        )
+        # نرجع الـ chat من النتيجة
+        if hasattr(result, 'chat'):
+            return result.chat
+        raise Exception("تعذّر الوصول للقناة عبر رابط الدعوة — تأكد أنك عضو فيها أولاً")
     return await client.get_entity(channel_input)
 
 async def _get_messages(client, channel, offset_id, limit):
@@ -121,7 +124,7 @@ def extract_file_info(msg):
         info["file_id"] = f"{doc.id}:{doc.dc_id}"
         info["size"]    = doc.size or 0
         info["mime"]    = doc.mime_type or ""
-        info["type"]    = ("video" if info["mime"].startswith("video/")
+        info["type"]    = ("video"    if info["mime"].startswith("video/")
                            else "image" if info["mime"].startswith("image/")
                            else "document")
         for attr in doc.attributes:
@@ -239,8 +242,7 @@ if st.session_state.step == 'login':
             else:
                 try:
                     client = run_sync(_make_client(api_id, api_hash))
-                    authorized = run_sync(_is_authorized(client))
-                    if not authorized:
+                    if not run_sync(_is_authorized(client)):
                         sent = run_sync(_send_code(client, phone))
                         st.session_state.phone_code_hash = sent.phone_code_hash
                         st.session_state.session_string  = get_session_string(client)
@@ -269,7 +271,7 @@ elif st.session_state.step == 'verify_code':
         password = st.text_input("كلمة مرور 2FA (إن وجدت)", type="password")
         if st.form_submit_button("تأكيد"):
             try:
-                # ✅ نعيد بناء الكلاينت من session_string على نفس الـ loop الخلفي
+                # ✅ نعيد بناء الكلاينت من session_string على نفس الـ loop المحفوظ
                 client = run_sync(_make_client(
                     st.session_state.api_id,
                     st.session_state.api_hash,
@@ -325,13 +327,13 @@ elif st.session_state.step == 'verify_code':
 elif st.session_state.step == 'channel':
     st.success("✅ تم تسجيل الدخول")
     with st.form("channel_form"):
-        channel_input  = st.text_input("رابط القناة*", placeholder="@username")
-        media_types    = st.multiselect("أنواع الملفات", ["photo", "video", "document"], default=["photo", "video"])
-        keep_strategy  = st.selectbox("استراتيجية الاحتفاظ", ["oldest", "newest", "largest"])
-        dry_run        = st.checkbox("وضع المعاينة", True)
-        min_size_mb    = st.number_input("الحد الأدنى للحجم (MB)", 0.0, 10000.0, 0.0)
-        auto_mode      = st.toggle("الوضع الآلي", False)
-        uploaded_db    = st.file_uploader("رفع قاعدة بيانات سابقة", type=['db'])
+        channel_input = st.text_input("رابط القناة*", placeholder="@username أو https://t.me/+xxx")
+        media_types   = st.multiselect("أنواع الملفات", ["photo", "video", "document"], default=["photo", "video"])
+        keep_strategy = st.selectbox("استراتيجية الاحتفاظ", ["oldest", "newest", "largest"])
+        dry_run       = st.checkbox("وضع المعاينة", True)
+        min_size_mb   = st.number_input("الحد الأدنى للحجم (MB)", 0.0, 10000.0, 0.0)
+        auto_mode     = st.toggle("الوضع الآلي", False)
+        uploaded_db   = st.file_uploader("رفع قاعدة بيانات سابقة", type=['db'])
         if uploaded_db:
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
             tmp.write(uploaded_db.getbuffer())
@@ -342,7 +344,7 @@ elif st.session_state.step == 'channel':
                 st.error("أدخل رابط القناة")
             else:
                 try:
-                    entity = run_sync(_get_entity(st.session_state.client, channel_input))
+                    entity = run_sync(_get_entity(st.session_state.client, channel_input.strip()))
                     st.session_state.channel     = entity
                     st.session_state.scan_params = {
                         'media_types': media_types, 'keep_strategy': keep_strategy,
@@ -422,9 +424,9 @@ elif st.session_state.step == 'scanning':
 
 # ---------- النتائج ----------
 elif st.session_state.step == 'results':
-    params   = st.session_state.scan_params
-    channel  = st.session_state.channel
-    db       = Database(st.session_state.db_path)
+    params     = st.session_state.scan_params
+    channel    = st.session_state.channel
+    db         = Database(st.session_state.db_path)
     duplicates = db.stream_duplicates(
         channel.id, params['keep_strategy'],
         int(params['min_size_mb'] * 1024 * 1024)
