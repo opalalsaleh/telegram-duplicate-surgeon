@@ -56,8 +56,8 @@ def run_sync(coro):
 BATCH_SCAN_SIZE   = 50
 BATCH_DELETE_SIZE = 25
 PAGE_SIZE         = 50
-PHASH_SIZE_LIMIT  = 5 * 1024 * 1024   # 5 MB
-MD5_SIZE_LIMIT    = 5 * 1024 * 1024   # 5 MB
+PHASH_SIZE_LIMIT  = 5 * 1024 * 1024
+MD5_SIZE_LIMIT    = 5 * 1024 * 1024
 
 # ================== دوال مساعدة ==================
 def fmt_size(n: int) -> str:
@@ -87,10 +87,10 @@ def get_file_unique_id(msg):
     if not media: return None
     if isinstance(media, MessageMediaDocument):
         doc = media.document
-        return str(doc.id)  # doc.id هو file_unique_id الفعلي
+        return str(doc.id)
     elif isinstance(media, MessageMediaPhoto):
         photo = media.photo
-        return str(photo.id)  # photo.id هو file_unique_id الفعلي
+        return str(photo.id)
     return None
 
 # ================== دوال Telethon async ==================
@@ -149,10 +149,9 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
         "id": msg.id, "file_id": None, "size": 0, "duration": 0,
         "mime": "", "type": "", "date": msg.date.isoformat(),
         "md5": None, "phash": None, "views": msg.views or 0, "name": None,
-        "file_unique_id": None  # 🆕 المعرف الثابت للملف
+        "file_unique_id": None
     }
     
-    # 🆕 استخراج file_unique_id (ثابت ولا يتغير مع إعادة الرفع)
     info["file_unique_id"] = get_file_unique_id(msg)
     
     if isinstance(media, MessageMediaDocument):
@@ -176,7 +175,6 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     else:
         return None
 
-    # حساب MD5 و pHash فقط إذا طُلب ذلك (التحليل العميق)
     if compute_md5 or compute_phash:
         thumb = get_thumb(media) if compute_phash else None
         data = None
@@ -206,7 +204,7 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     
     return info
 
-# ================== قاعدة البيانات (محدثة مع file_unique_id) ==================
+# ================== قاعدة البيانات ==================
 class Database:
     def __init__(self, path):
         self.conn = sqlite3.connect(path, check_same_thread=False)
@@ -232,7 +230,6 @@ class Database:
                 files_saved INTEGER DEFAULT 0
             )
         """)
-        # فهارس لتحسين أداء الاستعلامات
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_file_id ON seen_files(channel_id, file_id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_file_unique_id ON seen_files(channel_id, file_unique_id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_md5 ON seen_files(channel_id, md5_hash)")
@@ -268,7 +265,6 @@ class Database:
         order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
         duplicates = []
         
-        # 🆕 الطبقة 0: file_unique_id (الأساسية والأكثر دقة، بدون تحميل أي ملف)
         cursor = self.conn.execute(
             "SELECT file_unique_id FROM seen_files WHERE channel_id=? AND file_unique_id IS NOT NULL AND file_size>=? "
             "GROUP BY file_unique_id HAVING COUNT(DISTINCT file_id)>1",
@@ -291,7 +287,6 @@ class Database:
                         "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
                     })
         
-        # الطبقة 1: file_id (التكرارات الناتجة عن إعادة التوجيه)
         cursor = self.conn.execute(
             "SELECT file_id FROM seen_files WHERE channel_id=? AND file_size>=? GROUP BY file_id HAVING COUNT(*)>1",
             (channel_id, min_size)
@@ -310,7 +305,6 @@ class Database:
                     "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
                 })
         
-        # الطبقة 2: MD5 (اختياري)
         if use_md5:
             cursor = self.conn.execute(
                 "SELECT md5_hash FROM seen_files WHERE channel_id=? AND md5_hash IS NOT NULL AND file_size>=? "
@@ -334,7 +328,6 @@ class Database:
                             "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
                         })
         
-        # الطبقة 3: pHash (اختياري)
         if use_phash and _HAS_IMAGEHASH:
             cursor = self.conn.execute(
                 "SELECT phash FROM seen_files WHERE channel_id=? AND phash IS NOT NULL AND file_size>=? "
@@ -358,7 +351,6 @@ class Database:
                             "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
                         })
         
-        # إزالة التكرارات من القائمة النهائية
         unique_dups = {}
         for d in duplicates:
             key = (d['id'], d['file_id'])
@@ -387,7 +379,7 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ================== الشريط الجانبي (Sidebar) ==================
+# ================== الشريط الجانبي (Sidebar) - معدل ==================
 with st.sidebar:
     st.html("""
     <div class='sidebar-logo' onclick='window.location.reload()'>
@@ -416,7 +408,7 @@ with st.sidebar:
             st.session_state.step = 'login'
             st.rerun()
     elif current_step == 'channel':
-        if st.button("🚪 تسجيل الخروج", use_container_width=True):
+        if st.button("🚪 تسجيل الخروج", use_container_width=True, key="logout_channel"):
             for key in ['client', 'me', 'phone', 'api_id', 'api_hash', 'session_string']:
                 if key in st.session_state: del st.session_state[key]
             st.session_state.step = 'login'
@@ -440,7 +432,7 @@ with st.sidebar:
                 st.rerun()
     st.divider()
     if current_step not in ['login', 'verify_code']:
-        if st.button("🚪 تسجيل الخروج", use_container_width=True):
+        if st.button("🚪 الخروج من الحساب", use_container_width=True, key="logout_bottom"):
             for key in ['client', 'me', 'phone', 'api_id', 'api_hash', 'session_string']:
                 if key in st.session_state: del st.session_state[key]
             st.session_state.step = 'login'
