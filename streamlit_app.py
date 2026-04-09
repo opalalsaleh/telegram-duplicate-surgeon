@@ -1,13 +1,5 @@
 import streamlit as st
 import asyncio
-
-# هذا الجزء يحل مشكلة الـ Event Loop في Streamlit
-try:
-    loop = asyncio.get_event_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
 import gc
 import hashlib
 import io
@@ -18,7 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-from telethon.sync import TelegramClient
+from telethon import TelegramClient
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from telethon.tl.types import (
     MessageMediaDocument, MessageMediaPhoto, DocumentAttributeVideo,
@@ -31,6 +23,21 @@ try:
 except ImportError:
     _HAS_IMAGEHASH = False
 
+# ================== دالة مساعدة لتشغيل الكود غير المتزامن ==================
+def run_async(async_func, *args, **kwargs):
+    """
+    تشغيل دالة غير متزامنة بأمان في بيئة Streamlit.
+    تنشئ event loop جديد لكل استدعاء لتجنب تعارضات event loop.
+    """
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(async_func(*args, **kwargs))
+    except Exception as e:
+        raise e
+    finally:
+        loop.close()
+
 # ================== تهيئة الصفحة والتنسيق ==================
 st.set_page_config(
     page_title="Telegram Duplicate Surgeon",
@@ -39,7 +46,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# استخدام html مباشرة لتجنب مشكلة #
 st.html("""
 <style>
     .stApp { 
@@ -172,8 +178,8 @@ def get_thumb(media) -> Optional[any]:
             return min(doc.thumbs, key=lambda t: getattr(t, 'size', 0))
     return None
 
-def compute_hashes(client: TelegramClient, msg: Message, info: Dict,
-                   compute_md5: bool, compute_phash: bool) -> Tuple[Optional[str], Optional[str]]:
+async def compute_hashes_async(client: TelegramClient, msg: Message, info: Dict,
+                               compute_md5: bool, compute_phash: bool) -> Tuple[Optional[str], Optional[str]]:
     md5 = None
     phash = None
     if not (compute_md5 or compute_phash):
@@ -184,10 +190,10 @@ def compute_hashes(client: TelegramClient, msg: Message, info: Dict,
     data = None
     try:
         if thumb:
-            data = client.download_media(thumb, file=bytes)
+            data = await client.download_media(thumb, file=bytes)
         else:
             limit = PHASH_SIZE_LIMIT if compute_phash else None
-            data = client.download_media(msg, file=bytes, size=limit)
+            data = await client.download_media(msg, file=bytes, size=limit)
 
         if compute_md5 and info["size"] <= MD5_SIZE_LIMIT:
             md5 = hashlib.md5(data).hexdigest()
@@ -206,8 +212,8 @@ def compute_hashes(client: TelegramClient, msg: Message, info: Dict,
         gc.collect()
     return md5, phash
 
-def extract_file_info(client: TelegramClient, msg: Message,
-                      compute_md5: bool, compute_phash: bool) -> Optional[Dict]:
+async def extract_file_info_async(client: TelegramClient, msg: Message,
+                                  compute_md5: bool, compute_phash: bool) -> Optional[Dict]:
     media = msg.media
     if not media:
         return None
@@ -243,7 +249,7 @@ def extract_file_info(client: TelegramClient, msg: Message,
     else:
         return None
 
-    info["md5"], info["phash"] = compute_hashes(client, msg, info, compute_md5, compute_phash)
+    info["md5"], info["phash"] = await compute_hashes_async(client, msg, info, compute_md5, compute_phash)
     return info
 
 # ================== قاعدة البيانات ==================
@@ -366,6 +372,75 @@ class Database:
     def close(self):
         self.conn.close()
 
+# ================== دوال العمليات الرئيسية (async) ==================
+async def async_login(api_id: int, api_hash: str, phone: str) -> TelegramClient:
+    """تسجيل الدخول وإرجاع client جاهز"""
+    client = TelegramClient("streamlit_session", api_id, api_hash)
+    await client.connect()
+    if not await client.is_user_authorized():
+        await client.send_code_request(phone)
+    return client
+
+async def async_verify_code(client: TelegramClient, phone: str, code: str, password: str = None) -> bool:
+    """التحقق من رمز OTP"""
+    try:
+        await client.sign_in(phone, code)
+        return True
+    except SessionPasswordNeededError:
+        if password:
+            await client.sign_in(password=password)
+            return True
+        raise
+
+async def async_scan_batch(client: TelegramClient, channel, offset_id: int, limit: int,
+                           params: Dict, db: Database) -> Tuple[int, int, int]:
+    """فحص دفعة واحدة من الرسائل"""
+    scanned = 0
+    saved = 0
+    last_processed_id = offset_id
+
+    messages = await client.get_messages(channel, limit=limit, offset_id=offset_id)
+    for msg in messages:
+        if not msg:
+            continue
+        scanned += 1
+        last_processed_id = msg.id
+
+        if not msg.media:
+            continue
+
+        info = await extract_file_info_async(
+            client, msg,
+            params['compute_md5'],
+            params['compute_phash']
+        )
+        if not info:
+            continue
+        if info['type'] not in params['media_types']:
+            continue
+        if info['size'] < params['min_size_mb'] * 1024 * 1024:
+            continue
+
+        saved += 1
+        record = (
+            channel.id, info['id'], info['file_id'], info['size'],
+            info['duration'], info['md5'], info['phash'], info['date'],
+            info['type'], info['mime'], info['views'], info['name']
+        )
+        db.buffer_insert(record)
+
+    return last_processed_id, scanned, saved
+
+async def async_delete_batch(client: TelegramClient, channel, batch_ids: List[int]) -> int:
+    """حذف دفعة واحدة من الرسائل"""
+    try:
+        await client.delete_messages(channel, batch_ids)
+        return len(batch_ids)
+    except FloodWaitError as e:
+        raise e
+    except Exception as e:
+        raise e
+
 # ================== حالة الجلسة ==================
 if 'client' not in st.session_state:
     st.session_state.client = None
@@ -383,6 +458,10 @@ if 'selected_ids' not in st.session_state:
     st.session_state.selected_ids = set()
 if 'auto_mode' not in st.session_state:
     st.session_state.auto_mode = False
+if 'total_scanned' not in st.session_state:
+    st.session_state.total_scanned = 0
+if 'files_saved' not in st.session_state:
+    st.session_state.files_saved = 0
 
 # ================== واجهة المستخدم ==================
 st.title("🦖 Telegram Duplicate Surgeon")
@@ -400,18 +479,11 @@ if st.session_state.step == 'login':
                 st.error("جميع الحقول مطلوبة")
             else:
                 try:
-                    client = TelegramClient("streamlit_session", int(api_id), api_hash)
-                    client.connect()
-                    if not client.is_user_authorized():
-                        client.send_code_request(phone)
-                        st.session_state.client = client
-                        st.session_state.phone = phone
-                        st.session_state.step = 'verify_code'
-                        st.rerun()
-                    else:
-                        st.session_state.client = client
-                        st.session_state.step = 'channel'
-                        st.rerun()
+                    client = run_async(async_login, int(api_id), api_hash, phone)
+                    st.session_state.client = client
+                    st.session_state.phone = phone
+                    st.session_state.step = 'verify_code'
+                    st.rerun()
                 except Exception as e:
                     st.error(f"خطأ في الاتصال: {e}")
 
@@ -424,19 +496,11 @@ elif st.session_state.step == 'verify_code':
         if st.form_submit_button("تأكيد", use_container_width=True):
             client = st.session_state.client
             try:
-                client.sign_in(st.session_state.phone, code)
+                run_async(async_verify_code(client, st.session_state.phone, code, password))
                 st.session_state.step = 'channel'
                 st.rerun()
             except SessionPasswordNeededError:
-                if not password:
-                    st.error("الحساب محمي بكلمة مرور، الرجاء إدخالها")
-                else:
-                    try:
-                        client.sign_in(password=password)
-                        st.session_state.step = 'channel'
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"كلمة مرور غير صحيحة: {e}")
+                st.error("الحساب محمي بكلمة مرور، الرجاء إدخالها")
             except Exception as e:
                 st.error(f"رمز التحقق غير صحيح: {e}")
 
@@ -501,7 +565,7 @@ elif st.session_state.step == 'channel':
             else:
                 try:
                     client = st.session_state.client
-                    entity = client.get_entity(channel_input)
+                    entity = run_async(client.get_entity(channel_input))
                     st.session_state.channel = entity
                     st.session_state.scan_params = {
                         'channel_input': channel_input,
@@ -522,6 +586,13 @@ elif st.session_state.step == 'channel':
                         db.clear_channel(entity.id)
                     db.close()
 
+                    # تحميل حالة الاستئناف
+                    db = Database(st.session_state.db_path)
+                    last_id, total_scanned, files_saved = db.get_resume_state(entity.id)
+                    st.session_state.total_scanned = total_scanned
+                    st.session_state.files_saved = files_saved
+                    db.close()
+
                     st.session_state.step = 'scanning'
                     st.rerun()
                 except Exception as e:
@@ -535,63 +606,38 @@ elif st.session_state.step == 'scanning':
     channel = st.session_state.channel
 
     db = Database(st.session_state.db_path)
-    last_id, total_scanned, files_saved = db.get_resume_state(channel.id)
+    last_id, _, _ = db.get_resume_state(channel.id)
     offset_id = 0 if last_id == 0 else last_id + 1
 
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("📊 تم فحص", total_scanned)
+        st.metric("📊 تم فحص", st.session_state.total_scanned)
     with col2:
-        st.metric("💾 تم حفظ", files_saved)
+        st.metric("💾 تم حفظ", st.session_state.files_saved)
 
     button_label = "فحص الدفعة التالية" if not st.session_state.auto_mode else "▶️ بدء / استمرار المسح الآلي"
     if st.button(button_label, type="primary", use_container_width=True):
         client = st.session_state.client
-        scanned = total_scanned
-        saved = files_saved
-        last_processed_id = last_id
-
+        
         progress_bar = st.progress(0, text="جاري فحص الدفعة...")
         try:
-            messages = list(client.iter_messages(
-                channel, offset_id=offset_id, limit=BATCH_SCAN_SIZE, reverse=False
-            ))
-            for i, msg in enumerate(messages):
-                scanned += 1
-                last_processed_id = msg.id
-                progress_bar.progress(
-                    (i + 1) / len(messages),
-                    text=f"فحص {i+1}/{len(messages)} | المحفوظ: {saved}"
-                )
-
-                if not msg.media:
-                    continue
-
-                info = extract_file_info(
-                    client, msg,
-                    params['compute_md5'],
-                    params['compute_phash']
-                )
-                if not info:
-                    continue
-                if info['type'] not in params['media_types']:
-                    continue
-                if info['size'] < params['min_size_mb'] * 1024 * 1024:
-                    continue
-
-                saved += 1
-                record = (
-                    channel.id, info['id'], info['file_id'], info['size'],
-                    info['duration'], info['md5'], info['phash'], info['date'],
-                    info['type'], info['mime'], info['views'], info['name']
-                )
-                db.buffer_insert(record)
-                time.sleep(0.01)
-
-            db.save_progress(channel.id, last_processed_id, scanned, saved)
+            last_processed_id, scanned_count, saved_count = run_async(
+                async_scan_batch,
+                client, channel, offset_id, BATCH_SCAN_SIZE,
+                params, db
+            )
+            
+            st.session_state.total_scanned += scanned_count
+            st.session_state.files_saved += saved_count
+            
+            db.save_progress(
+                channel.id, last_processed_id,
+                st.session_state.total_scanned, st.session_state.files_saved
+            )
+            
             progress_bar.progress(1.0, text="✅ تم الانتهاء من الدفعة!")
 
-            if st.session_state.auto_mode and len(messages) == BATCH_SCAN_SIZE:
+            if st.session_state.auto_mode and scanned_count == BATCH_SCAN_SIZE:
                 time.sleep(1)
                 st.rerun()
 
@@ -671,10 +717,11 @@ elif st.session_state.step == 'results':
                     ids = list(st.session_state.selected_ids)
                     prog = st.progress(0)
                     deleted = 0
+                    client = st.session_state.client
                     for i in range(0, len(ids), BATCH_DELETE_SIZE):
                         batch = ids[i:i + BATCH_DELETE_SIZE]
                         try:
-                            st.session_state.client.delete_messages(channel, batch)
+                            run_async(async_delete_batch(client, channel, batch))
                             deleted += len(batch)
                         except FloodWaitError as e:
                             st.warning(f"انتظار {e.seconds}s")
@@ -729,6 +776,6 @@ elif st.session_state.step == 'results':
 # تذييل المطور
 st.markdown("---")
 st.markdown(
-    "<div class='footer'>تم التطوير بواسطة <strong>F.ALSALEH</strong> | Telegram Duplicate Surgeon v2.3</div>",
+    "<div class='footer'>تم التطوير بواسطة <strong>F.ALSALEH</strong> | Telegram Duplicate Surgeon v2.4</div>",
     unsafe_allow_html=True
 )
