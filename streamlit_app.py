@@ -37,7 +37,6 @@ st.html("""
     [data-testid="metric-container"] { background-color: #ffffff; border-radius: 16px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
     .sidebar-logo { text-align: center; padding: 20px 10px; cursor: pointer; }
     .sidebar-logo:hover { background-color: #f0fdf4; border-radius: 16px; }
-    .nav-button { margin: 5px 0; }
 </style>
 """)
 
@@ -57,8 +56,8 @@ def run_sync(coro):
 BATCH_SCAN_SIZE   = 50
 BATCH_DELETE_SIZE = 25
 PAGE_SIZE         = 50
-PHASH_SIZE_LIMIT  = 5 * 1024 * 1024
-MD5_SIZE_LIMIT    = 5 * 1024 * 1024
+PHASH_SIZE_LIMIT  = 5 * 1024 * 1024   # 5 MB
+MD5_SIZE_LIMIT    = 5 * 1024 * 1024   # 5 MB
 
 # ================== دوال مساعدة ==================
 def fmt_size(n: int) -> str:
@@ -82,10 +81,28 @@ def get_thumb(media):
             return min(doc.thumbs, key=lambda t: getattr(t, 'size', 0))
     return None
 
+def get_file_unique_id(msg):
+    """استخراج file_unique_id من الرسالة (ثابت للملف حتى لو أعيد رفعه)"""
+    media = msg.media
+    if not media: return None
+    if isinstance(media, MessageMediaDocument):
+        doc = media.document
+        return str(doc.id)  # doc.id هو file_unique_id الفعلي
+    elif isinstance(media, MessageMediaPhoto):
+        photo = media.photo
+        return str(photo.id)  # photo.id هو file_unique_id الفعلي
+    return None
+
 # ================== دوال Telethon async ==================
-async def _make_client(api_id, api_hash, session_string=None):
+@st.cache_resource
+def _get_cached_client(api_id: int, api_hash: str, session_string: str = None):
+    """إنشاء عميل تيليجرام مرة واحدة وتخزينه في الذاكرة المؤقتة"""
     session = StringSession(session_string) if session_string else StringSession()
     client = TelegramClient(session, int(api_id), api_hash)
+    return client
+
+async def _make_client(api_id, api_hash, session_string=None):
+    client = _get_cached_client(api_id, api_hash, session_string)
     await client.connect()
     return client
 
@@ -123,7 +140,7 @@ async def _delete_messages(client, channel, ids):
 def get_session_string(client):
     return client.session.save()
 
-# ================== استخراج معلومات الملف ==================
+# ================== استخراج معلومات الملف (مع دعم file_unique_id) ==================
 async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash: bool) -> Optional[Dict]:
     media = msg.media
     if not media: return None
@@ -131,8 +148,12 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     info = {
         "id": msg.id, "file_id": None, "size": 0, "duration": 0,
         "mime": "", "type": "", "date": msg.date.isoformat(),
-        "md5": None, "phash": None, "views": msg.views or 0, "name": None
+        "md5": None, "phash": None, "views": msg.views or 0, "name": None,
+        "file_unique_id": None  # 🆕 المعرف الثابت للملف
     }
+    
+    # 🆕 استخراج file_unique_id (ثابت ولا يتغير مع إعادة الرفع)
+    info["file_unique_id"] = get_file_unique_id(msg)
     
     if isinstance(media, MessageMediaDocument):
         doc = media.document
@@ -155,6 +176,7 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     else:
         return None
 
+    # حساب MD5 و pHash فقط إذا طُلب ذلك (التحليل العميق)
     if compute_md5 or compute_phash:
         thumb = get_thumb(media) if compute_phash else None
         data = None
@@ -178,12 +200,13 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
         except Exception:
             pass
         finally:
-            del data
+            if data:
+                del data
             gc.collect()
     
     return info
 
-# ================== قاعدة البيانات ==================
+# ================== قاعدة البيانات (محدثة مع file_unique_id) ==================
 class Database:
     def __init__(self, path):
         self.conn = sqlite3.connect(path, check_same_thread=False)
@@ -195,8 +218,9 @@ class Database:
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_files (
                 channel_id INTEGER, msg_id INTEGER, file_id TEXT,
-                file_size INTEGER, duration INTEGER, md5_hash TEXT, phash TEXT,
-                msg_date TEXT, file_type TEXT, mime_type TEXT, views INTEGER, file_name TEXT,
+                file_unique_id TEXT, file_size INTEGER, duration INTEGER,
+                md5_hash TEXT, phash TEXT, msg_date TEXT,
+                file_type TEXT, mime_type TEXT, views INTEGER, file_name TEXT,
                 PRIMARY KEY (channel_id, msg_id)
             ) WITHOUT ROWID
         """)
@@ -208,6 +232,11 @@ class Database:
                 files_saved INTEGER DEFAULT 0
             )
         """)
+        # فهارس لتحسين أداء الاستعلامات
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_file_id ON seen_files(channel_id, file_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_file_unique_id ON seen_files(channel_id, file_unique_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_md5 ON seen_files(channel_id, md5_hash)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_phash ON seen_files(channel_id, phash)")
         self.conn.commit()
 
     def get_resume_state(self, channel_id):
@@ -225,7 +254,7 @@ class Database:
         self.conn.commit()
 
     def buffer_insert(self, record):
-        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", record)
+        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
         self.conn.commit()
 
     def delete_msg_records(self, channel_id, msg_ids):
@@ -239,6 +268,30 @@ class Database:
         order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
         duplicates = []
         
+        # 🆕 الطبقة 0: file_unique_id (الأساسية والأكثر دقة، بدون تحميل أي ملف)
+        cursor = self.conn.execute(
+            "SELECT file_unique_id FROM seen_files WHERE channel_id=? AND file_unique_id IS NOT NULL AND file_size>=? "
+            "GROUP BY file_unique_id HAVING COUNT(DISTINCT file_id)>1",
+            (channel_id, min_size)
+        )
+        for row in cursor:
+            group = self.conn.execute(
+                f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                f"FROM seen_files WHERE channel_id=? AND file_unique_id=? ORDER BY {order}",
+                (channel_id, row[0])
+            ).fetchall()
+            keeper = group[0]
+            seen = set()
+            for dup in group[1:]:
+                if dup[3] not in seen:
+                    seen.add(dup[3])
+                    duplicates.append({
+                        "id": dup[0], "size": dup[1], "date": dup[2], "file_id": dup[3],
+                        "duration": dup[4], "phash": dup[5], "type": dup[6],
+                        "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
+                    })
+        
+        # الطبقة 1: file_id (التكرارات الناتجة عن إعادة التوجيه)
         cursor = self.conn.execute(
             "SELECT file_id FROM seen_files WHERE channel_id=? AND file_size>=? GROUP BY file_id HAVING COUNT(*)>1",
             (channel_id, min_size)
@@ -257,6 +310,7 @@ class Database:
                     "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
                 })
         
+        # الطبقة 2: MD5 (اختياري)
         if use_md5:
             cursor = self.conn.execute(
                 "SELECT md5_hash FROM seen_files WHERE channel_id=? AND md5_hash IS NOT NULL AND file_size>=? "
@@ -280,6 +334,7 @@ class Database:
                             "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
                         })
         
+        # الطبقة 3: pHash (اختياري)
         if use_phash and _HAS_IMAGEHASH:
             cursor = self.conn.execute(
                 "SELECT phash FROM seen_files WHERE channel_id=? AND phash IS NOT NULL AND file_size>=? "
@@ -303,6 +358,7 @@ class Database:
                             "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
                         })
         
+        # إزالة التكرارات من القائمة النهائية
         unique_dups = {}
         for d in duplicates:
             key = (d['id'], d['file_id'])
@@ -325,7 +381,7 @@ defaults = {
     'session_string': None, 'api_id': None, 'api_hash': None, 'phone': None,
     'last_deleted_count': 0, 'last_deleted_failed': 0,
     'auto_scan_running': False, 'scan_speed': 0.0,
-    'me': None,  # معلومات المستخدم
+    'me': None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -333,18 +389,14 @@ for k, v in defaults.items():
 
 # ================== الشريط الجانبي (Sidebar) ==================
 with st.sidebar:
-    # شعار التطبيق - يمكن النقر عليه للعودة للقناة
     st.html("""
     <div class='sidebar-logo' onclick='window.location.reload()'>
         <h1 style='margin:0; font-size:2.5rem;'>🦖</h1>
         <p style='margin:5px 0 0 0; font-weight:bold; color:#10b981;'>Telegram Surgeon</p>
-        <p style='font-size:0.8rem; color:#64748b;'>v3.0 Pro</p>
+        <p style='font-size:0.8rem; color:#64748b;'>v4.0 Pro</p>
     </div>
     """)
-    
     st.divider()
-    
-    # معلومات المستخدم الحالي
     if st.session_state.client and st.session_state.step not in ['login', 'verify_code']:
         try:
             if not st.session_state.me:
@@ -353,68 +405,52 @@ with st.sidebar:
             st.markdown(f"**👤 {me.first_name}**")
             if me.username:
                 st.markdown(f"@{me.username}")
-        except:
-            pass
-    
-    # معلومات القناة الحالية
+        except: pass
     if st.session_state.channel:
         channel = st.session_state.channel
         st.markdown(f"**📢 {getattr(channel, 'title', 'قناة')}**")
-    
     st.divider()
-    
-    # أزرار التنقل حسب الخطوة الحالية
     current_step = st.session_state.step
-    
     if current_step == 'verify_code':
-        if st.button("⬅️ العودة لتسجيل الدخول", use_container_width=True, key="nav_back_login"):
+        if st.button("⬅️ العودة لتسجيل الدخول", use_container_width=True):
             st.session_state.step = 'login'
             st.rerun()
-    
     elif current_step == 'channel':
-        if st.button("🚪 تسجيل الخروج", use_container_width=True, key="nav_logout"):
+        if st.button("🚪 تسجيل الخروج", use_container_width=True):
             for key in ['client', 'me', 'phone', 'api_id', 'api_hash', 'session_string']:
-                if key in st.session_state:
-                    del st.session_state[key]
+                if key in st.session_state: del st.session_state[key]
             st.session_state.step = 'login'
             st.rerun()
-    
     elif current_step == 'scanning':
-        if st.button("⬅️ تغيير القناة", use_container_width=True, key="nav_back_channel"):
+        if st.button("⬅️ تغيير القناة", use_container_width=True):
             st.session_state.step = 'channel'
             st.session_state.auto_scan_running = False
             st.rerun()
-    
     elif current_step == 'results':
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("⬅️ مسح", use_container_width=True, key="nav_back_scan"):
+            if st.button("⬅️ مسح", use_container_width=True):
                 st.session_state.step = 'scanning'
                 st.session_state.selected_ids = set()
                 st.rerun()
         with col2:
-            if st.button("📋 قناة", use_container_width=True, key="nav_back_channel2"):
+            if st.button("📋 قناة", use_container_width=True):
                 st.session_state.step = 'channel'
                 st.session_state.selected_ids = set()
                 st.rerun()
-    
     st.divider()
-    
-    # زر تسجيل الخروج (دائماً موجود)
     if current_step not in ['login', 'verify_code']:
-        if st.button("🚪 تسجيل الخروج", use_container_width=True, key="nav_logout_bottom"):
+        if st.button("🚪 تسجيل الخروج", use_container_width=True):
             for key in ['client', 'me', 'phone', 'api_id', 'api_hash', 'session_string']:
-                if key in st.session_state:
-                    del st.session_state[key]
+                if key in st.session_state: del st.session_state[key]
             st.session_state.step = 'login'
             st.rerun()
-    
     st.markdown("---")
     st.markdown("<p style='text-align:center; font-size:0.8rem; color:#64748b;'>© F.ALSALEH</p>", unsafe_allow_html=True)
 
 # ================== المحتوى الرئيسي ==================
 st.title("🦖 Telegram Duplicate Surgeon Pro")
-st.caption("الأداة الجراحية الكاملة – File ID · MD5 · pHash")
+st.caption("الأداة الجراحية الكاملة – File Unique ID · MD5 · pHash")
 
 # ---------- تسجيل الدخول ----------
 if st.session_state.step == 'login':
@@ -528,11 +564,11 @@ elif st.session_state.step == 'channel':
         
         col_a, col_b = st.columns(2)
         with col_a:
-            st.markdown("✅ **File ID** (أساسي، سريع جداً)")
-            compute_md5 = st.checkbox("🔐 MD5 Hash – تطابق المحتوى", value=False,
+            st.markdown("✅ **File Unique ID** (أساسي، دقيق جداً، بدون تحميل)")
+            compute_md5 = st.checkbox("🔐 MD5 Hash – تطابق المحتوى (تحليل عميق)", value=False,
                                       help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
         with col_b:
-            compute_phash = st.checkbox("🖼️ pHash – تشابه بصري للصور", value=_HAS_IMAGEHASH,
+            compute_phash = st.checkbox("🖼️ pHash – تشابه بصري للصور (تحليل عميق)", value=_HAS_IMAGEHASH,
                                         disabled=not _HAS_IMAGEHASH,
                                         help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها. يستخدم الصور المصغرة.")
         
@@ -640,9 +676,9 @@ elif st.session_state.step == 'scanning':
                     if info['size'] < params['min_size_mb'] * 1024 * 1024: continue
                     saved += 1
                     db.buffer_insert((
-                        channel.id, info['id'], info['file_id'], info['size'],
-                        info['duration'], info['md5'], info['phash'], info['date'],
-                        info['type'], info['mime'], info['views'], info['name']
+                        channel.id, info['id'], info['file_id'], info['file_unique_id'],
+                        info['size'], info['duration'], info['md5'], info['phash'],
+                        info['date'], info['type'], info['mime'], info['views'], info['name']
                     ))
                 st.session_state.total_scanned += scanned
                 st.session_state.files_saved   += saved
@@ -795,4 +831,4 @@ elif st.session_state.step == 'results':
     db.close()
 
 st.markdown("---")
-st.markdown("<div style='text-align:center; color:#64748b; padding:20px;'>تم التطوير بواسطة <strong>F.ALSALEH</strong> | Telegram Duplicate Surgeon Pro v3.0</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center; color:#64748b; padding:20px;'>تم التطوير بواسطة <strong>F.ALSALEH</strong> | Telegram Duplicate Surgeon Pro v4.0</div>", unsafe_allow_html=True)
