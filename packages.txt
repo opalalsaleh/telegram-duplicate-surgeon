@@ -1,2 +1,2 @@
-libjpeg-turbo
-zlib
+libjpeg62-turbo-dev
+zlib1g-dev
