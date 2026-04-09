@@ -30,99 +30,77 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-st.markdown("""
+# استخدام html مباشرة لتجنب مشكلة #
+st.html("""
 <style>
-    st.markdown("""
-<style>
-    /* خلفية ناعمة */
     .stApp { 
-        background: linear-gradient(135deg,  #f5f7fa 0%,  #e9ecf2 100%);
+        background: linear-gradient(135deg, #f5f7fa 0%, #e9ecf2 100%);
     }
-    
-    /* شريط التقدم */
     .stProgress > div > div > div > div { 
-        background: linear-gradient(90deg,  #10b981 0%,  #059669 100%);
+        background: linear-gradient(90deg, #10b981 0%, #059669 100%);
         border-radius: 10px;
     }
-    
-    /* الجداول */
     .stDataFrame tbody tr:hover { 
-        background-color:  #e2e8f0 !important;
+        background-color: #e2e8f0 !important;
     }
-    
-    /* الأزرار */
     .stButton > button {
         border-radius: 12px;
         font-weight: 600;
         transition: all 0.2s;
-        border: 1px solid  #d1d5db !important;
-        background-color:  #ffffff !important;
-        color:  #1f2937 !important;
+        border: 1px solid #d1d5db !important;
+        background-color: #ffffff !important;
+        color: #1f2937 !important;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         min-height: 48px;
     }
     .stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: 0 6px 12px rgba(0,0,0,0.1);
-        border-color:  #10b981 !important;
-        background-color:  #f0fdf4 !important;
+        border-color: #10b981 !important;
+        background-color: #f0fdf4 !important;
     }
-    
-    /* أزرار رئيسية */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg,  #10b981 0%,  #059669 100%) !important;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
         color: white !important;
         border: none !important;
     }
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg,  #059669 0%,  #047857 100%) !important;
+        background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
     }
-    
-    /* بطاقات المترية */
     [data-testid="metric-container"] {
-        background-color:  #ffffff;
+        background-color: #ffffff;
         border-radius: 16px;
         padding: 16px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        border: 1px solid  #e5e7eb;
+        border: 1px solid #e5e7eb;
     }
-    
-    /* العناوين */
     h1, h2, h3 { 
-        color:  #0f172a !important;
+        color: #0f172a !important;
         font-weight: 700 !important;
     }
-    
-    /* صناديق التنبيه */
     .stAlert {
         border-radius: 16px;
         border-left-width: 6px;
     }
-    
-    /* حقول الإدخال */
     .stTextInput input, .stSelectbox select, .stMultiselect div {
         border-radius: 12px !important;
-        border: 1px solid  #d1d5db !important;
+        border: 1px solid #d1d5db !important;
     }
     .stTextInput input:focus {
-        border-color:  #10b981 !important;
+        border-color: #10b981 !important;
         box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1) !important;
     }
-    
-    /* تذييل */
     .footer {
         width: 100%;
-        background: linear-gradient(90deg,  #f8fafc 0%,  #ffffff 100%);
+        background: linear-gradient(90deg, #f8fafc 0%, #ffffff 100%);
         text-align: center;
         padding: 16px;
         font-size: 14px;
-        color:  #64748b;
-        border-top: 1px solid  #e2e8f0;
+        color: #64748b;
+        border-top: 1px solid #e2e8f0;
         margin-top: 30px;
         border-radius: 16px 16px 0 0;
     }
-    
-    /* تحسينات الهاتف */
     @media (max-width: 768px) {
         .stButton > button {
             min-height: 52px;
@@ -135,29 +113,23 @@ st.markdown("""
             padding: 12px;
         }
     }
-    
-    /* أشرطة التمرير */
     ::-webkit-scrollbar {
         width: 8px;
         height: 8px;
     }
     ::-webkit-scrollbar-track {
-        background:  #f1f1f1;
+        background: #f1f1f1;
         border-radius: 10px;
     }
     ::-webkit-scrollbar-thumb {
-        background:  #10b981;
+        background: #10b981;
         border-radius: 10px;
     }
     ::-webkit-scrollbar-thumb:hover {
-        background:  #059669;
+        background: #059669;
     }
 </style>
-""", unsafe_allow_html=True)
-</style>
-""", unsafe_allow_html=True)
-</style>
-""", unsafe_allow_html=True)
+""")
 
 # ================== الثوابت والإعدادات ==================
 BATCH_SCAN_SIZE = 50
@@ -658,7 +630,6 @@ elif st.session_state.step == 'results':
         page = st.session_state.page
         page_duplicates = all_duplicates[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
 
-        # تقليل البيانات المعروضة على الهاتف
         df = pd.DataFrame([{
             "معرف": d['id'],
             "النوع": d['type'],
@@ -723,7 +694,6 @@ elif st.session_state.step == 'results':
                     "text/csv"
                 )
 
-        # Pagination controls
         col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
         with col1:
             if st.button("⏪") and page > 0:
