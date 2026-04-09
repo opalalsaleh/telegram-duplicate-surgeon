@@ -1,5 +1,4 @@
 import streamlit as st
-import asyncio
 import gc
 import hashlib
 import io
@@ -10,7 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-from telethon import TelegramClient
+from telethon.sync import TelegramClient
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from telethon.tl.types import (
     MessageMediaDocument, MessageMediaPhoto, DocumentAttributeVideo,
@@ -22,24 +21,6 @@ try:
     _HAS_IMAGEHASH = True
 except ImportError:
     _HAS_IMAGEHASH = False
-
-# ================== إدارة الـ Event Loop بشكل آمن ==================
-def get_or_create_eventloop():
-    """إنشاء أو استرجاع event loop آمن لـ Streamlit"""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop
-
-def run_async(async_func, *args, **kwargs):
-    """تشغيل دالة غير متزامنة بأمان في Streamlit"""
-    loop = get_or_create_eventloop()
-    return loop.run_until_complete(async_func(*args, **kwargs))
 
 # ================== تهيئة الصفحة ==================
 st.set_page_config(page_title="Telegram Duplicate Surgeon", page_icon="🦖", layout="wide")
@@ -81,15 +62,15 @@ def get_thumb(media):
         if doc and doc.thumbs: return min(doc.thumbs, key=lambda t: getattr(t, 'size', 0))
     return None
 
-async def compute_hashes_async(client, msg, info, compute_md5, compute_phash):
+def compute_hashes(client, msg, info, compute_md5, compute_phash):
     md5 = phash = None
     if not (compute_md5 or compute_phash): return md5, phash
     media = msg.media
     thumb = get_thumb(media) if compute_phash else None
     data = None
     try:
-        if thumb: data = await client.download_media(thumb, file=bytes)
-        else: data = await client.download_media(msg, file=bytes, size=PHASH_SIZE_LIMIT if compute_phash else None)
+        if thumb: data = client.download_media(thumb, file=bytes)
+        else: data = client.download_media(msg, file=bytes, size=PHASH_SIZE_LIMIT if compute_phash else None)
         if compute_md5 and info["size"] <= MD5_SIZE_LIMIT: md5 = hashlib.md5(data).hexdigest()
         if compute_phash and _HAS_IMAGEHASH:
             try:
@@ -102,7 +83,7 @@ async def compute_hashes_async(client, msg, info, compute_md5, compute_phash):
         gc.collect()
     return md5, phash
 
-async def extract_file_info_async(client, msg, compute_md5, compute_phash):
+def extract_file_info(client, msg, compute_md5, compute_phash):
     media = msg.media
     if not media: return None
     info = {"id": msg.id, "file_id": None, "size": 0, "duration": 0, "mime": "", "type": "", "date": msg.date.isoformat(), "md5": None, "phash": None, "views": msg.views or 0, "name": None}
@@ -124,16 +105,8 @@ async def extract_file_info_async(client, msg, compute_md5, compute_phash):
         candidates = [s for s in sizes if hasattr(s, "size") and s.size > 0]
         info["size"] = max(candidates, key=lambda s: s.size).size if candidates else 0
     else: return None
-    info["md5"], info["phash"] = await compute_hashes_async(client, msg, info, compute_md5, compute_phash)
+    info["md5"], info["phash"] = compute_hashes(client, msg, info, compute_md5, compute_phash)
     return info
-
-async def get_messages_async(client, channel, offset_id, limit):
-    """جلب الرسائل بشكل غير متزامن"""
-    return await client.get_messages(channel, limit=limit, offset_id=offset_id)
-
-async def delete_messages_async(client, channel, batch_ids):
-    """حذف الرسائل بشكل غير متزامن"""
-    return await client.delete_messages(channel, batch_ids)
 
 # ================== قاعدة البيانات ==================
 class Database:
@@ -184,26 +157,6 @@ if 'auto_mode' not in st.session_state: st.session_state.auto_mode = False
 if 'total_scanned' not in st.session_state: st.session_state.total_scanned = 0
 if 'files_saved' not in st.session_state: st.session_state.files_saved = 0
 
-# ================== دوال تسجيل الدخول ==================
-async def async_login(api_id, api_hash, phone):
-    client = TelegramClient("streamlit_session", api_id, api_hash)
-    await client.connect()
-    if not await client.is_user_authorized():
-        await client.send_code_request(phone)
-    return client
-
-async def async_verify(client, phone, code, password):
-    try:
-        await client.sign_in(phone, code)
-        return True, None
-    except SessionPasswordNeededError:
-        if password:
-            await client.sign_in(password=password)
-            return True, None
-        return False, "2FA"
-    except Exception as e:
-        return False, str(e)
-
 # ================== واجهة المستخدم ==================
 st.title("🦖 Telegram Duplicate Surgeon")
 
@@ -219,11 +172,18 @@ if st.session_state.step == 'login':
                 st.error("جميع الحقول مطلوبة")
             else:
                 try:
-                    client = run_async(async_login(int(api_id), api_hash, phone))
-                    st.session_state.client = client
-                    st.session_state.phone = phone
-                    st.session_state.step = 'verify_code'
-                    st.rerun()
+                    client = TelegramClient("streamlit_session", int(api_id), api_hash)
+                    client.connect()
+                    if not client.is_user_authorized():
+                        client.send_code_request(phone)
+                        st.session_state.client = client
+                        st.session_state.phone = phone
+                        st.session_state.step = 'verify_code'
+                        st.rerun()
+                    else:
+                        st.session_state.client = client
+                        st.session_state.step = 'channel'
+                        st.rerun()
                 except Exception as e:
                     st.error(f"خطأ: {e}")
 
@@ -235,14 +195,22 @@ elif st.session_state.step == 'verify_code':
         password = st.text_input("كلمة مرور 2FA (إن وجدت)", type="password")
         if st.form_submit_button("تأكيد"):
             client = st.session_state.client
-            success, error = run_async(async_verify(client, st.session_state.phone, code, password))
-            if success:
+            try:
+                client.sign_in(st.session_state.phone, code)
                 st.session_state.step = 'channel'
                 st.rerun()
-            elif error == "2FA":
-                st.error("الحساب محمي بكلمة مرور، الرجاء إدخالها")
-            else:
-                st.error(f"رمز غير صحيح: {error}")
+            except SessionPasswordNeededError:
+                if not password:
+                    st.error("الحساب محمي بكلمة مرور، الرجاء إدخالها")
+                else:
+                    try:
+                        client.sign_in(password=password)
+                        st.session_state.step = 'channel'
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"كلمة مرور غير صحيحة: {e}")
+            except Exception as e:
+                st.error(f"رمز غير صحيح: {e}")
 
 # الخطوة 3: القناة والإعدادات
 elif st.session_state.step == 'channel':
@@ -264,8 +232,7 @@ elif st.session_state.step == 'channel':
             if not channel_input: st.error("أدخل رابط القناة")
             else:
                 try:
-                    client = st.session_state.client
-                    entity = run_async(client.get_entity(channel_input))
+                    entity = st.session_state.client.get_entity(channel_input)
                     st.session_state.channel = entity
                     st.session_state.scan_params = {'media_types': media_types, 'keep_strategy': keep_strategy, 'dry_run': dry_run, 'min_size_mb': min_size_mb}
                     st.session_state.auto_mode = auto_mode
@@ -298,7 +265,7 @@ elif st.session_state.step == 'scanning':
         client = st.session_state.client
         progress = st.progress(0)
         try:
-            messages = run_async(get_messages_async(client, channel, offset_id, BATCH_SCAN_SIZE))
+            messages = list(client.iter_messages(channel, offset_id=offset_id, limit=BATCH_SCAN_SIZE, reverse=False))
             scanned = saved = 0
             last_id = offset_id
             for i, msg in enumerate(messages):
@@ -307,7 +274,7 @@ elif st.session_state.step == 'scanning':
                 last_id = msg.id
                 progress.progress((i+1)/len(messages))
                 if not msg.media: continue
-                info = run_async(extract_file_info_async(client, msg, False, False))
+                info = extract_file_info(client, msg, False, False)
                 if not info or info['type'] not in params['media_types'] or info['size'] < params['min_size_mb']*1024*1024: continue
                 saved += 1
                 db.buffer_insert((channel.id, info['id'], info['file_id'], info['size'], info['duration'], info['md5'], info['phash'], info['date'], info['type'], info['mime'], info['views'], info['name']))
@@ -358,7 +325,7 @@ elif st.session_state.step == 'results':
                 deleted = 0
                 for i in range(0, len(ids), BATCH_DELETE_SIZE):
                     try:
-                        run_async(delete_messages_async(st.session_state.client, channel, ids[i:i+BATCH_DELETE_SIZE]))
+                        st.session_state.client.delete_messages(channel, ids[i:i+BATCH_DELETE_SIZE])
                         deleted += len(ids[i:i+BATCH_DELETE_SIZE])
                     except FloodWaitError as e:
                         st.warning(f"انتظار {e.seconds}s")
