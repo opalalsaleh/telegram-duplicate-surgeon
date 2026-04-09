@@ -1,4 +1,13 @@
 import streamlit as st
+import asyncio
+
+# هذا الجزء يحل مشكلة الـ Event Loop في Streamlit
+try:
+    loop = asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
 import gc
 import hashlib
 import io
