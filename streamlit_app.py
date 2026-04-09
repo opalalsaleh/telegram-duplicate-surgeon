@@ -303,7 +303,6 @@ class Database:
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_files (
                 channel_id INTEGER, msg_id INTEGER, file_id TEXT, file_unique_id TEXT,
-                video_hash TEXT,
                 file_size INTEGER, duration INTEGER, md5_hash TEXT, phash TEXT,
                 msg_date TEXT, file_type TEXT, mime_type TEXT, views INTEGER, file_name TEXT,
                 PRIMARY KEY (channel_id, msg_id)
@@ -334,7 +333,7 @@ class Database:
         self.conn.commit()
 
     def buffer_insert(self, record):
-        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
+        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
         self.conn.commit()
 
     def delete_msg_records(self, channel_id, msg_ids):
