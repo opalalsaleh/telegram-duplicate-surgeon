@@ -225,7 +225,9 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     if not media: return None
     
     info = {
-        "id": msg.id, "file_id": None, "file_unique_id": None, "size": 0, "duration": 0,
+        "id": msg.id, "file_id": None, "file_unique_id": None,
+        "video_hash": None,   # حجم+مدة للفيديو
+        "size": 0, "duration": 0,
         "mime": "", "type": "", "date": msg.date.isoformat(),
         "md5": None, "phash": None, "views": msg.views or 0, "name": None
     }
@@ -233,23 +235,31 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     if isinstance(media, MessageMediaDocument):
         doc = media.document
         info["file_id"] = f"{doc.id}:{doc.dc_id}"
-        info["file_unique_id"] = str(doc.id)
         info["size"]    = doc.size or 0
         info["mime"]    = doc.mime_type or ""
         info["type"]    = ("video"    if info["mime"].startswith("video/")
                            else "image" if info["mime"].startswith("image/")
                            else "document")
         for attr in doc.attributes:
-            if isinstance(attr, DocumentAttributeVideo): info["duration"] = attr.duration or 0
-            if hasattr(attr, 'file_name'): info["name"] = attr.file_name
+            if isinstance(attr, DocumentAttributeVideo):
+                info["duration"] = attr.duration or 0
+            if hasattr(attr, 'file_name'):
+                info["name"] = attr.file_name
+        # file_unique_id للفيديو: حجم_البايت:المدة_بالثانية — ثابت حتى لو أُعيد الرفع
+        # أدق من access_hash الذي يتغير بين الجلسات
+        if info["type"] == "video" and info["size"] > 0:
+            info["file_unique_id"] = f"v:{info['size']}:{int(info['duration'])}"
+        else:
+            info["file_unique_id"] = f"d:{doc.id}"
+
     elif isinstance(media, MessageMediaPhoto):
         photo = media.photo
         info["file_id"] = f"{photo.id}:{photo.dc_id}"
-        info["file_unique_id"] = str(photo.id)
         info["type"]    = "photo"
         info["mime"]    = "image/jpeg"
         sizes = [s for s in getattr(photo, "sizes", []) if hasattr(s, "size") and s.size > 0]
         info["size"] = max(sizes, key=lambda s: s.size).size if sizes else 0
+        info["file_unique_id"] = f"p:{photo.id}"  # الصور: photo.id ثابت عند إعادة الرفع
     else:
         return None
 
@@ -293,6 +303,7 @@ class Database:
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_files (
                 channel_id INTEGER, msg_id INTEGER, file_id TEXT, file_unique_id TEXT,
+                video_hash TEXT,
                 file_size INTEGER, duration INTEGER, md5_hash TEXT, phash TEXT,
                 msg_date TEXT, file_type TEXT, mime_type TEXT, views INTEGER, file_name TEXT,
                 PRIMARY KEY (channel_id, msg_id)
@@ -323,7 +334,7 @@ class Database:
         self.conn.commit()
 
     def buffer_insert(self, record):
-        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
+        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
         self.conn.commit()
 
     def delete_msg_records(self, channel_id, msg_ids):
@@ -337,9 +348,14 @@ class Database:
         order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
         duplicates = []
         
-        # Layer 1: file_id (exact same upload)
+    def stream_duplicates(self, channel_id, keep_strategy, min_size=0, use_md5=False, use_phash=False):
+        order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
+        duplicates = []
+
+        # ── Layer 1: file_id متطابق (نفس الرسالة مُعاد توجيهها forward) ──
         cursor = self.conn.execute(
-            "SELECT file_id FROM seen_files WHERE channel_id=? AND file_size>=? GROUP BY file_id HAVING COUNT(*)>1",
+            "SELECT file_id FROM seen_files WHERE channel_id=? AND file_size>=? "
+            "GROUP BY file_id HAVING COUNT(*)>1",
             (channel_id, min_size)
         )
         for row in cursor:
@@ -356,14 +372,16 @@ class Database:
                     "type": dup[7], "mime": dup[8], "name": dup[9], "keeper_id": keeper[0],
                     "match_type": "file_id"
                 })
-        
-        # Layer 1b: file_unique_id (same file re-uploaded — different message)
+
+        # ── Layer 2: file_unique_id متطابق (نفس الفيديو مُرفوع من جديد) ──
+        # للفيديو: file_unique_id = "v:{size}:{duration}" → ثابت مهما تغيّر doc.id
         cursor = self.conn.execute(
-            "SELECT file_unique_id FROM seen_files WHERE channel_id=? AND file_unique_id IS NOT NULL AND file_size>=? "
-            "GROUP BY file_unique_id HAVING COUNT(DISTINCT file_id)>1",
+            "SELECT file_unique_id FROM seen_files "
+            "WHERE channel_id=? AND file_unique_id IS NOT NULL AND file_size>=? "
+            "GROUP BY file_unique_id HAVING COUNT(*)>1",
             (channel_id, min_size)
         )
-        seen_fuid = set()
+        seen_fuid: set = set()
         for row in cursor:
             fuid = row[0]
             if fuid in seen_fuid:
@@ -375,16 +393,17 @@ class Database:
                 (channel_id, fuid)
             ).fetchall()
             keeper = group[0]
-            seen_ids = set()
+            keeper_file_id = keeper[3]
             for dup in group[1:]:
-                if dup[3] not in seen_ids:
-                    seen_ids.add(dup[3])
-                    duplicates.append({
-                        "id": dup[0], "size": dup[1], "date": dup[2], "file_id": dup[3],
-                        "file_unique_id": dup[4], "duration": dup[5], "phash": dup[6],
-                        "type": dup[7], "mime": dup[8], "name": dup[9], "keeper_id": keeper[0],
-                        "match_type": "file_unique_id"
-                    })
+                # تجنّب التكرار مع Layer 1
+                if dup[3] == keeper_file_id:
+                    continue
+                duplicates.append({
+                    "id": dup[0], "size": dup[1], "date": dup[2], "file_id": dup[3],
+                    "file_unique_id": dup[4], "duration": dup[5], "phash": dup[6],
+                    "type": dup[7], "mime": dup[8], "name": dup[9], "keeper_id": keeper[0],
+                    "match_type": "file_unique_id"
+                })
         
         if use_md5:
             cursor = self.conn.execute(
@@ -434,11 +453,14 @@ class Database:
                             "match_type": "phash"
                         })
         
-        unique_dups = {}
+        # إزالة التكرارات: نفس msg_id قد يظهر من أكثر من طبقة
+        unique_dups: dict = {}
         for d in duplicates:
-            key = (d['id'], d['file_id'])
-            if key not in unique_dups or d['size'] > unique_dups[key]['size']:
-                unique_dups[key] = d
+            mid = d['id']
+            # الأولوية: file_id > file_unique_id > md5 > phash
+            priority = {"file_id": 0, "file_unique_id": 1, "md5": 2, "phash": 3}
+            if mid not in unique_dups or priority.get(d['match_type'], 9) < priority.get(unique_dups[mid]['match_type'], 9):
+                unique_dups[mid] = d
         return list(unique_dups.values())
 
     def clear_channel(self, channel_id):
