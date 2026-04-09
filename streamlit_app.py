@@ -25,19 +25,115 @@ except ImportError:
     _HAS_IMAGEHASH = False
 
 # ================== تهيئة الصفحة ==================
-st.set_page_config(page_title="Telegram Duplicate Surgeon Pro", page_icon="🦖", layout="wide")
+st.set_page_config(page_title="DupCut – مزيل المكررات", page_icon="✂️", layout="wide")
 
 # ================== التنسيق العام ==================
 st.html("""
 <style>
-    .stApp { background: linear-gradient(135deg, #f5f7fa 0%, #e9ecf2 100%); }
-    .stButton > button { border-radius: 12px; font-weight: 600; min-height: 48px; }
-    .stButton > button[kind="primary"] { background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important; color: white !important; }
-    .footer { width: 100%; text-align: center; padding: 16px; color: #64748b; margin-top: 30px; }
-    [data-testid="metric-container"] { background-color: #ffffff; border-radius: 16px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-    .sidebar-logo { text-align: center; padding: 20px 10px; cursor: pointer; }
-    .sidebar-logo:hover { background-color: #f0fdf4; border-radius: 16px; }
-    .nav-button { margin: 5px 0; }
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;600;700&display=swap');
+
+    html, body, [class*="css"] { font-family: 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif; }
+
+    .stApp { background: #f0f4f8; }
+
+    /* ── Sidebar ── */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+        border-right: 1px solid #334155;
+    }
+    [data-testid="stSidebar"] * { color: #e2e8f0 !important; }
+    [data-testid="stSidebar"] .stMarkdown a { color: #38bdf8 !important; }
+    [data-testid="stSidebar"] hr { border-color: #334155 !important; }
+    [data-testid="stSidebar"] .stButton > button {
+        background: #1e293b !important;
+        border: 1px solid #334155 !important;
+        color: #cbd5e1 !important;
+        border-radius: 10px;
+        font-weight: 500;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background: #334155 !important;
+        border-color: #38bdf8 !important;
+        color: #f8fafc !important;
+    }
+
+    .sidebar-logo {
+        text-align: center;
+        padding: 24px 10px 16px;
+    }
+    .sidebar-logo .logo-icon { font-size: 2.8rem; line-height: 1; }
+    .sidebar-logo .logo-name {
+        margin: 8px 0 2px;
+        font-size: 1.4rem;
+        font-weight: 700;
+        background: linear-gradient(90deg, #38bdf8, #818cf8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    .sidebar-logo .logo-ver {
+        font-size: 0.75rem;
+        color: #64748b !important;
+    }
+
+    /* ── Main buttons ── */
+    .stButton > button {
+        border-radius: 10px;
+        font-weight: 600;
+        min-height: 44px;
+        transition: all 0.2s;
+        border: 1.5px solid #e2e8f0;
+        background: #ffffff;
+        color: #1e293b;
+    }
+    .stButton > button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.10); }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%) !important;
+        color: white !important;
+        border: none !important;
+        box-shadow: 0 4px 14px rgba(14,165,233,0.35);
+    }
+    .stButton > button[kind="primary"]:hover { box-shadow: 0 6px 20px rgba(14,165,233,0.45); }
+
+    /* ── Metric cards ── */
+    [data-testid="metric-container"] {
+        background: #ffffff;
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        border: 1px solid #e2e8f0;
+    }
+
+    /* ── Forms / inputs ── */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input {
+        border-radius: 8px;
+        border: 1.5px solid #e2e8f0 !important;
+        background: #ffffff !important;
+    }
+    .stTextInput > div > div > input:focus,
+    .stNumberInput > div > div > input:focus {
+        border-color: #0ea5e9 !important;
+        box-shadow: 0 0 0 3px rgba(14,165,233,0.12) !important;
+    }
+
+    /* ── Headers ── */
+    h1, h2, h3 { font-weight: 700 !important; color: #0f172a !important; }
+
+    /* ── Divider ── */
+    hr { border-color: #e2e8f0 !important; margin: 1.2rem 0 !important; }
+
+    /* ── Data editor ── */
+    .stDataEditor { border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; }
+
+    /* ── Footer ── */
+    .footer-bar {
+        text-align: center;
+        padding: 18px;
+        color: #94a3b8;
+        font-size: 0.82rem;
+        margin-top: 32px;
+    }
+    .footer-bar strong { color: #64748b; }
 </style>
 """)
 
@@ -129,7 +225,7 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     if not media: return None
     
     info = {
-        "id": msg.id, "file_id": None, "size": 0, "duration": 0,
+        "id": msg.id, "file_id": None, "file_unique_id": None, "size": 0, "duration": 0,
         "mime": "", "type": "", "date": msg.date.isoformat(),
         "md5": None, "phash": None, "views": msg.views or 0, "name": None
     }
@@ -137,6 +233,7 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     if isinstance(media, MessageMediaDocument):
         doc = media.document
         info["file_id"] = f"{doc.id}:{doc.dc_id}"
+        info["file_unique_id"] = str(doc.id)
         info["size"]    = doc.size or 0
         info["mime"]    = doc.mime_type or ""
         info["type"]    = ("video"    if info["mime"].startswith("video/")
@@ -148,6 +245,7 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     elif isinstance(media, MessageMediaPhoto):
         photo = media.photo
         info["file_id"] = f"{photo.id}:{photo.dc_id}"
+        info["file_unique_id"] = str(photo.id)
         info["type"]    = "photo"
         info["mime"]    = "image/jpeg"
         sizes = [s for s in getattr(photo, "sizes", []) if hasattr(s, "size") and s.size > 0]
@@ -194,7 +292,7 @@ class Database:
     def _init_tables(self):
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_files (
-                channel_id INTEGER, msg_id INTEGER, file_id TEXT,
+                channel_id INTEGER, msg_id INTEGER, file_id TEXT, file_unique_id TEXT,
                 file_size INTEGER, duration INTEGER, md5_hash TEXT, phash TEXT,
                 msg_date TEXT, file_type TEXT, mime_type TEXT, views INTEGER, file_name TEXT,
                 PRIMARY KEY (channel_id, msg_id)
@@ -225,7 +323,7 @@ class Database:
         self.conn.commit()
 
     def buffer_insert(self, record):
-        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", record)
+        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
         self.conn.commit()
 
     def delete_msg_records(self, channel_id, msg_ids):
@@ -239,13 +337,14 @@ class Database:
         order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
         duplicates = []
         
+        # Layer 1: file_id (exact same upload)
         cursor = self.conn.execute(
             "SELECT file_id FROM seen_files WHERE channel_id=? AND file_size>=? GROUP BY file_id HAVING COUNT(*)>1",
             (channel_id, min_size)
         )
         for row in cursor:
             group = self.conn.execute(
-                f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                f"SELECT msg_id, file_size, msg_date, file_id, file_unique_id, duration, phash, file_type, mime_type, file_name "
                 f"FROM seen_files WHERE channel_id=? AND file_id=? ORDER BY {order}",
                 (channel_id, row[0])
             ).fetchall()
@@ -253,9 +352,39 @@ class Database:
             for dup in group[1:]:
                 duplicates.append({
                     "id": dup[0], "size": dup[1], "date": dup[2], "file_id": dup[3],
-                    "duration": dup[4], "phash": dup[5], "type": dup[6],
-                    "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
+                    "file_unique_id": dup[4], "duration": dup[5], "phash": dup[6],
+                    "type": dup[7], "mime": dup[8], "name": dup[9], "keeper_id": keeper[0],
+                    "match_type": "file_id"
                 })
+        
+        # Layer 1b: file_unique_id (same file re-uploaded — different message)
+        cursor = self.conn.execute(
+            "SELECT file_unique_id FROM seen_files WHERE channel_id=? AND file_unique_id IS NOT NULL AND file_size>=? "
+            "GROUP BY file_unique_id HAVING COUNT(DISTINCT file_id)>1",
+            (channel_id, min_size)
+        )
+        seen_fuid = set()
+        for row in cursor:
+            fuid = row[0]
+            if fuid in seen_fuid:
+                continue
+            seen_fuid.add(fuid)
+            group = self.conn.execute(
+                f"SELECT msg_id, file_size, msg_date, file_id, file_unique_id, duration, phash, file_type, mime_type, file_name "
+                f"FROM seen_files WHERE channel_id=? AND file_unique_id=? ORDER BY {order}",
+                (channel_id, fuid)
+            ).fetchall()
+            keeper = group[0]
+            seen_ids = set()
+            for dup in group[1:]:
+                if dup[3] not in seen_ids:
+                    seen_ids.add(dup[3])
+                    duplicates.append({
+                        "id": dup[0], "size": dup[1], "date": dup[2], "file_id": dup[3],
+                        "file_unique_id": dup[4], "duration": dup[5], "phash": dup[6],
+                        "type": dup[7], "mime": dup[8], "name": dup[9], "keeper_id": keeper[0],
+                        "match_type": "file_unique_id"
+                    })
         
         if use_md5:
             cursor = self.conn.execute(
@@ -265,7 +394,7 @@ class Database:
             )
             for row in cursor:
                 group = self.conn.execute(
-                    f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                    f"SELECT msg_id, file_size, msg_date, file_id, file_unique_id, duration, phash, file_type, mime_type, file_name "
                     f"FROM seen_files WHERE channel_id=? AND md5_hash=? ORDER BY {order}",
                     (channel_id, row[0])
                 ).fetchall()
@@ -276,8 +405,9 @@ class Database:
                         seen.add(dup[3])
                         duplicates.append({
                             "id": dup[0], "size": dup[1], "date": dup[2], "file_id": dup[3],
-                            "duration": dup[4], "phash": dup[5], "type": dup[6],
-                            "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
+                            "file_unique_id": dup[4], "duration": dup[5], "phash": dup[6],
+                            "type": dup[7], "mime": dup[8], "name": dup[9], "keeper_id": keeper[0],
+                            "match_type": "md5"
                         })
         
         if use_phash and _HAS_IMAGEHASH:
@@ -288,7 +418,7 @@ class Database:
             )
             for row in cursor:
                 group = self.conn.execute(
-                    f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                    f"SELECT msg_id, file_size, msg_date, file_id, file_unique_id, duration, phash, file_type, mime_type, file_name "
                     f"FROM seen_files WHERE channel_id=? AND phash=? ORDER BY {order}",
                     (channel_id, row[0])
                 ).fetchall()
@@ -299,8 +429,9 @@ class Database:
                         seen.add(dup[3])
                         duplicates.append({
                             "id": dup[0], "size": dup[1], "date": dup[2], "file_id": dup[3],
-                            "duration": dup[4], "phash": dup[5], "type": dup[6],
-                            "mime": dup[7], "name": dup[8], "keeper_id": keeper[0]
+                            "file_unique_id": dup[4], "duration": dup[5], "phash": dup[6],
+                            "type": dup[7], "mime": dup[8], "name": dup[9], "keeper_id": keeper[0],
+                            "match_type": "phash"
                         })
         
         unique_dups = {}
@@ -335,10 +466,10 @@ for k, v in defaults.items():
 with st.sidebar:
     # شعار التطبيق - يمكن النقر عليه للعودة للقناة
     st.html("""
-    <div class='sidebar-logo' onclick='window.location.reload()'>
-        <h1 style='margin:0; font-size:2.5rem;'>🦖</h1>
-        <p style='margin:5px 0 0 0; font-weight:bold; color:#10b981;'>Telegram Surgeon</p>
-        <p style='font-size:0.8rem; color:#64748b;'>v3.0 Pro</p>
+    <div class='sidebar-logo'>
+        <div class='logo-icon'>✂️</div>
+        <div class='logo-name'>DupCut</div>
+        <div class='logo-ver'>v4.0 · Telegram</div>
     </div>
     """)
     
@@ -413,8 +544,8 @@ with st.sidebar:
     st.markdown("<p style='text-align:center; font-size:0.8rem; color:#64748b;'>© F.ALSALEH</p>", unsafe_allow_html=True)
 
 # ================== المحتوى الرئيسي ==================
-st.title("🦖 Telegram Duplicate Surgeon Pro")
-st.caption("الأداة الجراحية الكاملة – File ID · MD5 · pHash")
+st.title("✂️ DupCut")
+st.caption("كشف المكررات عبر: File ID · File Unique ID · MD5 · pHash")
 
 # ---------- تسجيل الدخول ----------
 if st.session_state.step == 'login':
@@ -528,7 +659,7 @@ elif st.session_state.step == 'channel':
         
         col_a, col_b = st.columns(2)
         with col_a:
-            st.markdown("✅ **File ID** (أساسي، سريع جداً)")
+            st.markdown("✅ **File ID + File Unique ID** (أساسي، سريع جداً)")
             compute_md5 = st.checkbox("🔐 MD5 Hash – تطابق المحتوى", value=False,
                                       help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
         with col_b:
@@ -640,7 +771,7 @@ elif st.session_state.step == 'scanning':
                     if info['size'] < params['min_size_mb'] * 1024 * 1024: continue
                     saved += 1
                     db.buffer_insert((
-                        channel.id, info['id'], info['file_id'], info['size'],
+                        channel.id, info['id'], info['file_id'], info['file_unique_id'], info['size'],
                         info['duration'], info['md5'], info['phash'], info['date'],
                         info['type'], info['mime'], info['views'], info['name']
                     ))
@@ -705,7 +836,8 @@ elif st.session_state.step == 'results':
                 "النوع": d['type'],
                 "الحجم": fmt_size(d['size']),
                 "التاريخ": d['date'][:10],
-                "اسم الملف": (d['name'][:25] + "..." if d['name'] and len(d['name']) > 25 else d['name']) or "",
+                "اسم الملف": (d['name'][:25] + "…" if d['name'] and len(d['name']) > 25 else d['name']) or "—",
+                "سبب التكرار": {"file_id": "🔗 نفس الرفع", "file_unique_id": "♻️ أعيد رفعه", "md5": "🔐 MD5", "phash": "🖼️ pHash"}.get(d.get('match_type',''), "🔗 نفس الرفع"),
                 "تحديد": False
             }
             for d in page_dups
@@ -795,4 +927,4 @@ elif st.session_state.step == 'results':
     db.close()
 
 st.markdown("---")
-st.markdown("<div style='text-align:center; color:#64748b; padding:20px;'>تم التطوير بواسطة <strong>F.ALSALEH</strong> | Telegram Duplicate Surgeon Pro v3.0</div>", unsafe_allow_html=True)
+st.markdown("<div class='footer-bar'>صُنع بعناية بواسطة <strong>F.ALSALEH</strong> · DupCut v4.0</div>", unsafe_allow_html=True)
