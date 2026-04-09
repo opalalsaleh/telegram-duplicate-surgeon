@@ -24,11 +24,28 @@ try:
 except ImportError:
     _HAS_IMAGEHASH = False
 
-# ================== تهيئة event loop للخيط الرئيسي ==================
+# ================== تهيئة event loop ثابت للكل ==================
+# Streamlit بيشغل كل re-run بـ thread مختلف، لازم نحتفظ بنفس الـ loop
+import threading
+
+def get_or_create_loop():
+    """يرجع event loop ثابت مشترك بين كل الـ threads"""
+    if not hasattr(st.session_state, '_tg_loop') or st.session_state._tg_loop is None or st.session_state._tg_loop.is_closed():
+        loop = asyncio.new_event_loop()
+        st.session_state._tg_loop = loop
+        # شغل الـ loop بـ thread خلفي إذا مو شغال
+        t = threading.Thread(target=loop.run_forever, daemon=True)
+        t.start()
+    return st.session_state._tg_loop
+
+# تعيين الـ loop الثابت كـ loop حالي لهاد الـ thread
 try:
-    asyncio.get_event_loop()
+    loop = asyncio.get_event_loop()
+    if loop.is_closed():
+        raise RuntimeError
 except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
 # ================== تهيئة الصفحة ==================
 st.set_page_config(page_title="Telegram Duplicate Surgeon", page_icon="🦖", layout="wide")
@@ -120,7 +137,8 @@ def extract_file_info(client, msg, compute_md5, compute_phash):
 def make_client(api_id, api_hash, session_string=None):
     """ينشئ TelegramClient باستخدام StringSession لضمان استمرارية الجلسة"""
     session = StringSession(session_string) if session_string else StringSession()
-    return TelegramClient(session, int(api_id), api_hash)
+    loop = get_or_create_loop()
+    return TelegramClient(session, int(api_id), api_hash, loop=loop)
 
 # ================== قاعدة البيانات ==================
 class Database:
