@@ -25,115 +25,264 @@ except ImportError:
     _HAS_IMAGEHASH = False
 
 # ================== تهيئة الصفحة ==================
-st.set_page_config(page_title="DupCut – مزيل المكررات", page_icon="✂️", layout="wide")
+st.set_page_config(page_title="DupZap – مزيل المكررات", page_icon="✂️", layout="wide")
 
 # ================== التنسيق العام ==================
 st.html("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
 
-    html, body, [class*="css"] { font-family: 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif; }
-
-    .stApp { background: #f0f4f8; }
-
-    /* ── Sidebar ── */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-        border-right: 1px solid #334155;
+    html, body, [class*="css"], .stApp {
+        font-family: 'IBM Plex Sans Arabic', 'Segoe UI', system-ui, sans-serif;
     }
-    [data-testid="stSidebar"] * { color: #e2e8f0 !important; }
-    [data-testid="stSidebar"] .stMarkdown a { color: #38bdf8 !important; }
-    [data-testid="stSidebar"] hr { border-color: #334155 !important; }
+
+    /* ══════════════════════════════════════
+       خلفية التطبيق
+    ══════════════════════════════════════ */
+    .stApp {
+        background: #f8fafc;
+    }
+    .main .block-container {
+        padding-top: 2rem;
+        max-width: 960px;
+    }
+
+    /* ══════════════════════════════════════
+       الشريط الجانبي
+    ══════════════════════════════════════ */
+    [data-testid="stSidebar"] {
+        background: #0f172a !important;
+    }
+    [data-testid="stSidebar"] > div:first-child {
+        padding: 0;
+    }
+    [data-testid="stSidebar"] * { color: #cbd5e1 !important; }
+    [data-testid="stSidebar"] hr { border-color: #1e293b !important; margin: 0.75rem 0 !important; }
+
+    /* أزرار الـ sidebar */
     [data-testid="stSidebar"] .stButton > button {
-        background: #1e293b !important;
-        border: 1px solid #334155 !important;
-        color: #cbd5e1 !important;
-        border-radius: 10px;
+        background: transparent !important;
+        border: 1px solid #1e293b !important;
+        color: #94a3b8 !important;
+        border-radius: 8px;
         font-weight: 500;
+        font-size: 0.85rem;
+        transition: all 0.15s;
     }
     [data-testid="stSidebar"] .stButton > button:hover {
-        background: #334155 !important;
-        border-color: #38bdf8 !important;
-        color: #f8fafc !important;
+        background: #1e293b !important;
+        border-color: #334155 !important;
+        color: #e2e8f0 !important;
+        transform: none;
+        box-shadow: none;
     }
 
+    /* شعار */
     .sidebar-logo {
         text-align: center;
-        padding: 24px 10px 16px;
+        padding: 28px 16px 20px;
+        border-bottom: 1px solid #1e293b;
+        margin-bottom: 8px;
     }
-    .sidebar-logo .logo-icon { font-size: 2.8rem; line-height: 1; }
+    .sidebar-logo .logo-icon {
+        font-size: 2.6rem;
+        line-height: 1;
+        display: block;
+        margin-bottom: 10px;
+    }
     .sidebar-logo .logo-name {
-        margin: 8px 0 2px;
-        font-size: 1.4rem;
+        font-size: 1.45rem;
         font-weight: 700;
-        background: linear-gradient(90deg, #38bdf8, #818cf8);
+        background: linear-gradient(90deg, #38bdf8 0%, #818cf8 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
+        display: block;
+        margin-bottom: 3px;
     }
     .sidebar-logo .logo-ver {
-        font-size: 0.75rem;
-        color: #64748b !important;
+        font-size: 0.72rem;
+        color: #475569 !important;
+        letter-spacing: 0.04em;
     }
 
-    /* ── Main buttons ── */
-    .stButton > button {
+    /* معلومات المستخدم في sidebar */
+    .user-chip {
+        background: #1e293b;
         border-radius: 10px;
-        font-weight: 600;
-        min-height: 44px;
-        transition: all 0.2s;
-        border: 1.5px solid #e2e8f0;
-        background: #ffffff;
-        color: #1e293b;
+        padding: 10px 14px;
+        margin: 8px 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
-    .stButton > button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.10); }
+
+    /* ══════════════════════════════════════
+       العنوان الرئيسي
+    ══════════════════════════════════════ */
+    h1 {
+        font-size: 2rem !important;
+        font-weight: 700 !important;
+        color: #0f172a !important;
+        letter-spacing: -0.02em;
+        margin-bottom: 0 !important;
+    }
+    h2, h3 { font-weight: 600 !important; color: #1e293b !important; }
+
+    /* caption تحت العنوان */
+    .stApp [data-testid="stCaptionContainer"] p {
+        color: #64748b;
+        font-size: 0.88rem;
+    }
+
+    /* ══════════════════════════════════════
+       الأزرار العامة
+    ══════════════════════════════════════ */
+    .stButton > button {
+        border-radius: 9px;
+        font-weight: 600;
+        font-size: 0.88rem;
+        min-height: 42px;
+        transition: all 0.18s cubic-bezier(.4,0,.2,1);
+        border: 1.5px solid #e2e8f0 !important;
+        background: #ffffff !important;
+        color: #374151 !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .stButton > button:hover {
+        border-color: #cbd5e1 !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.09) !important;
+        transform: translateY(-1px);
+        color: #0f172a !important;
+    }
+    .stButton > button:active { transform: translateY(0); }
+
+    /* زر primary */
     .stButton > button[kind="primary"] {
         background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%) !important;
-        color: white !important;
+        color: #ffffff !important;
         border: none !important;
-        box-shadow: 0 4px 14px rgba(14,165,233,0.35);
+        box-shadow: 0 3px 12px rgba(99,102,241,0.30) !important;
     }
-    .stButton > button[kind="primary"]:hover { box-shadow: 0 6px 20px rgba(14,165,233,0.45); }
+    .stButton > button[kind="primary"]:hover {
+        box-shadow: 0 6px 20px rgba(99,102,241,0.40) !important;
+        transform: translateY(-2px);
+        color: #ffffff !important;
+    }
 
-    /* ── Metric cards ── */
+    /* ══════════════════════════════════════
+       بطاقات المقاييس (Metrics)
+    ══════════════════════════════════════ */
     [data-testid="metric-container"] {
         background: #ffffff;
         border-radius: 14px;
-        padding: 18px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        padding: 20px 16px;
         border: 1px solid #e2e8f0;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        transition: box-shadow 0.2s;
     }
+    [data-testid="metric-container"]:hover {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    }
+    [data-testid="stMetricLabel"] { color: #64748b !important; font-size: 0.82rem !important; }
+    [data-testid="stMetricValue"] { color: #0f172a !important; font-weight: 700 !important; }
 
-    /* ── Forms / inputs ── */
+    /* ══════════════════════════════════════
+       حقول الإدخال
+    ══════════════════════════════════════ */
     .stTextInput > div > div > input,
-    .stNumberInput > div > div > input {
-        border-radius: 8px;
+    .stNumberInput > div > div > input,
+    .stSelectbox > div > div {
+        border-radius: 9px !important;
         border: 1.5px solid #e2e8f0 !important;
         background: #ffffff !important;
+        font-size: 0.9rem;
+        transition: border-color 0.15s, box-shadow 0.15s;
     }
     .stTextInput > div > div > input:focus,
     .stNumberInput > div > div > input:focus {
-        border-color: #0ea5e9 !important;
-        box-shadow: 0 0 0 3px rgba(14,165,233,0.12) !important;
+        border-color: #6366f1 !important;
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.12) !important;
+        outline: none !important;
+    }
+    .stTextInput label, .stNumberInput label,
+    .stSelectbox label, .stMultiSelect label,
+    .stCheckbox label, .stToggle label {
+        font-size: 0.85rem !important;
+        font-weight: 600 !important;
+        color: #374151 !important;
     }
 
-    /* ── Headers ── */
-    h1, h2, h3 { font-weight: 700 !important; color: #0f172a !important; }
+    /* ══════════════════════════════════════
+       الفاصل
+    ══════════════════════════════════════ */
+    hr { border-color: #f1f5f9 !important; margin: 1.5rem 0 !important; }
 
-    /* ── Divider ── */
-    hr { border-color: #e2e8f0 !important; margin: 1.2rem 0 !important; }
+    /* ══════════════════════════════════════
+       بطاقة الـ form
+    ══════════════════════════════════════ */
+    [data-testid="stForm"] {
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 28px !important;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
 
-    /* ── Data editor ── */
-    .stDataEditor { border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; }
+    /* ══════════════════════════════════════
+       جدول البيانات
+    ══════════════════════════════════════ */
+    .stDataEditor {
+        border-radius: 12px !important;
+        overflow: hidden;
+        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }
 
-    /* ── Footer ── */
+    /* ══════════════════════════════════════
+       Progress bar
+    ══════════════════════════════════════ */
+    .stProgress > div > div > div > div {
+        background: linear-gradient(90deg, #0ea5e9, #6366f1) !important;
+        border-radius: 99px;
+    }
+
+    /* ══════════════════════════════════════
+       رسائل النجاح / التحذير / الخطأ
+    ══════════════════════════════════════ */
+    [data-testid="stAlert"] {
+        border-radius: 10px !important;
+        border-width: 1px !important;
+    }
+
+    /* ══════════════════════════════════════
+       Footer
+    ══════════════════════════════════════ */
     .footer-bar {
         text-align: center;
-        padding: 18px;
+        padding: 20px;
         color: #94a3b8;
-        font-size: 0.82rem;
-        margin-top: 32px;
+        font-size: 0.8rem;
+        margin-top: 40px;
+        border-top: 1px solid #f1f5f9;
     }
-    .footer-bar strong { color: #64748b; }
+    .footer-bar strong { color: #64748b; font-weight: 600; }
+
+    /* ══════════════════════════════════════
+       Badge سبب التكرار في الجدول
+    ══════════════════════════════════════ */
+    .match-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 99px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f8fafc; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 </style>
 """)
 
@@ -489,7 +638,7 @@ with st.sidebar:
     st.html("""
     <div class='sidebar-logo'>
         <div class='logo-icon'>✂️</div>
-        <div class='logo-name'>DupCut</div>
+        <div class='logo-name'>DupZap</div>
         <div class='logo-ver'>v4.0 · Telegram</div>
     </div>
     """)
@@ -565,8 +714,19 @@ with st.sidebar:
     st.markdown("<p style='text-align:center; font-size:0.8rem; color:#64748b;'>© F.ALSALEH</p>", unsafe_allow_html=True)
 
 # ================== المحتوى الرئيسي ==================
-st.title("✂️ DupCut")
-st.caption("كشف المكررات عبر: File ID · File Unique ID · MD5 · pHash")
+st.html("""
+<div style="padding: 8px 0 24px;">
+  <div style="display:flex; align-items:center; gap:12px; margin-bottom:4px;">
+    <span style="font-size:2rem;">✂️</span>
+    <span style="font-size:1.9rem; font-weight:700; color:#0f172a; letter-spacing:-0.02em;">DupZap</span>
+    <span style="background:#f1f5f9; color:#64748b; font-size:0.72rem; font-weight:600;
+                 padding:3px 10px; border-radius:99px; letter-spacing:0.04em; margin-top:4px;">v4.0</span>
+  </div>
+  <p style="color:#64748b; font-size:0.88rem; margin:0;">
+    كشف المكررات عبر: File ID · File Unique ID · MD5 · pHash
+  </p>
+</div>
+""")
 
 # ---------- تسجيل الدخول ----------
 if st.session_state.step == 'login':
@@ -659,7 +819,7 @@ elif st.session_state.step == 'verify_code':
 
 # ---------- اختيار القناة والإعدادات ----------
 elif st.session_state.step == 'channel':
-    st.success("✅ تم تسجيل الدخول بنجاح")
+    st.html("<div style='padding:4px 0 16px;'><span style='color:#10b981; font-size:0.9rem; font-weight:600;'>✓ تم تسجيل الدخول بنجاح</span></div>")
     with st.form("channel_form"):
         st.subheader("📡 إعدادات القناة والمسح")
         channel_input = st.text_input("رابط القناة*", placeholder="@username أو https://t.me/+xxx")
@@ -670,9 +830,8 @@ elif st.session_state.step == 'channel':
             keep_strategy = st.selectbox("استراتيجية الاحتفاظ", ["oldest (الأقدم)", "newest (الأحدث)", "largest (الأكبر)"])
             keep_strategy_map = {"oldest (الأقدم)": "oldest", "newest (الأحدث)": "newest", "largest (الأكبر)": "largest"}
         with col2:
-            dry_run     = st.checkbox("وضع المعاينة (بدون حذف فعلي)", True)
             min_size_mb = st.number_input("الحد الأدنى للحجم (MB)", 0.0, 10000.0, 0.0, step=1.0)
-            auto_mode   = st.toggle("الوضع الآلي (مسح مستمر)", False)
+            auto_mode   = st.toggle("الوضع الآلي", False, help="يفحص القناة كاملاً دفعة بعد دفعة بشكل تلقائي")
         
         st.markdown("---")
         st.subheader("🔬 طبقات اكتشاف التكرار")
@@ -706,7 +865,6 @@ elif st.session_state.step == 'channel':
                     st.session_state.scan_params = {
                         'media_types': media_types,
                         'keep_strategy': keep_strategy_map[keep_strategy],
-                        'dry_run': dry_run,
                         'min_size_mb': min_size_mb,
                         'compute_md5': compute_md5,
                         'compute_phash': compute_phash
@@ -830,7 +988,7 @@ elif st.session_state.step == 'results':
         use_phash=params.get('compute_phash', False)
     )
 
-    st.subheader(f"📋 المكررات في: {getattr(channel, 'title', str(channel.id))}")
+    st.html(f"<h3 style='margin:0 0 16px; color:#0f172a;'>📋 {getattr(channel, 'title', str(channel.id))}</h3>")
 
     if st.session_state.last_deleted_count > 0:
         st.success(f"✅ تم حذف {st.session_state.last_deleted_count} رسالة بنجاح")
@@ -842,10 +1000,15 @@ elif st.session_state.step == 'results':
     if not duplicates:
         st.success("🎉 لا توجد مكررات!")
     else:
-        st.warning(f"🔔 {len(duplicates)} رسالة مكررة")
-
-        if params['dry_run']:
-            st.info("🔍 وضع المعاينة مفعّل — لن يُحذف شيء فعلاً.")
+        st.html(f"""
+        <div style="display:inline-flex; align-items:center; gap:8px; background:#fff7ed;
+                    border:1px solid #fed7aa; border-radius:10px; padding:10px 16px; margin-bottom:16px;">
+          <span style="font-size:1.1rem;">⚠️</span>
+          <span style="color:#c2410c; font-weight:600; font-size:0.95rem;">
+            {len(duplicates)} رسالة مكررة
+          </span>
+        </div>
+        """)
 
         page = st.session_state.page
         total_pages = max(1, (len(duplicates) + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -908,13 +1071,16 @@ elif st.session_state.step == 'results':
 
         selected_count = len(st.session_state.selected_ids)
         if selected_count > 0:
-            st.info(f"📌 محدد: {selected_count} رسالة")
+            st.html(f"""
+            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:9px;
+                        padding:10px 16px; margin:12px 0; color:#166534; font-weight:600; font-size:0.9rem;">
+              📌 محدد للحذف: {selected_count} رسالة
+            </div>
+            """)
 
         if st.button(f"🗑️ حذف {selected_count} رسالة محددة", type="primary", disabled=selected_count == 0, use_container_width=True):
             if selected_count == 0:
                 st.warning("لم تحدد أي رسائل")
-            elif params['dry_run']:
-                st.info(f"🔍 معاينة: سيتم حذف {selected_count} رسالة")
             else:
                 ids = list(st.session_state.selected_ids)
                 prog = st.progress(0, text="جاري الحذف...")
@@ -948,4 +1114,4 @@ elif st.session_state.step == 'results':
     db.close()
 
 st.markdown("---")
-st.markdown("<div class='footer-bar'>صُنع بعناية بواسطة <strong>F.ALSALEH</strong> · DupCut v4.0</div>", unsafe_allow_html=True)
+st.markdown("<div class='footer-bar'>صُنع بعناية بواسطة <strong>F.ALSALEH</strong> · DupZap v4.0</div>", unsafe_allow_html=True)
