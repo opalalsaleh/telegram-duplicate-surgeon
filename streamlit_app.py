@@ -424,20 +424,62 @@ class Database:
                 ).fetchall()
                 add_group(group, "md5")
 
-        # ── Layer 3: pHash ──
+        # ── Layer 3: pHash بـ Hamming distance (يكتشف الصور المرفوعة من جديد) ──
         if use_phash and _HAS_IMAGEHASH:
-            cursor = self.conn.execute(
-                "SELECT phash FROM seen_files WHERE channel_id=? AND phash IS NOT NULL AND file_size>=? "
-                "GROUP BY phash HAVING COUNT(DISTINCT file_id)>1",
+            # نجيب كل الصور اللي عندها phash من DB — صفر تحميل إضافي
+            rows = self.conn.execute(
+                "SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                "FROM seen_files WHERE channel_id=? AND phash IS NOT NULL "
+                "AND file_size>=? AND file_type IN ('photo','image')",
                 (channel_id, min_size)
-            )
-            for row in cursor:
-                group = self.conn.execute(
-                    f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
-                    f"FROM seen_files WHERE channel_id=? AND phash=? ORDER BY {order}",
-                    (channel_id, row[0])
-                ).fetchall()
-                add_group(group, "phash")
+            ).fetchall()
+
+            if rows:
+                # Union-Find لمنع التعديم الزائف
+                n   = len(rows)
+                uf2 = _UnionFind(n)
+
+                hashes = []
+                for r in rows:
+                    try:    hashes.append(imagehash.hex_to_hash(r[5]))
+                    except: hashes.append(None)
+
+                # O(n²) لكن على البيانات الموجودة فقط — بدون شبكة
+                for i in range(n):
+                    if hashes[i] is None or rows[i][0] in seen_msg_ids: continue
+                    for j in range(i + 1, n):
+                        if hashes[j] is None or rows[j][0] in seen_msg_ids: continue
+                        if rows[i][3] == rows[j][3]: continue  # نفس file_id → Layer 1 يغطيه
+                        # Hamming distance ≤ 6 من أصل 64 bit — صارم (تطابق شبه تام فقط)
+                        if (hashes[i] - hashes[j]) <= 6:
+                            uf2.union(i, j)
+
+                # اجمع المجموعات
+                groups2: Dict[int, List[int]] = {}
+                for idx in range(n):
+                    root = uf2.find(idx)
+                    groups2.setdefault(root, []).append(idx)
+
+                for root, members in groups2.items():
+                    if len(members) < 2: continue
+                    # رتّب حسب الاستراتيجية
+                    if keep_strategy == "largest":
+                        members.sort(key=lambda i: rows[i][1], reverse=True)
+                    elif keep_strategy == "newest":
+                        members.sort(key=lambda i: rows[i][2], reverse=True)
+                    else:  # oldest
+                        members.sort(key=lambda i: rows[i][2])
+                    keeper = rows[members[0]]
+                    for idx in members[1:]:
+                        r = rows[idx]
+                        if r[0] in seen_msg_ids: continue
+                        seen_msg_ids.add(r[0])
+                        duplicates.append({
+                            "id": r[0], "size": r[1], "date": r[2], "file_id": r[3],
+                            "duration": r[4], "phash": r[5], "type": r[6],
+                            "mime": r[7], "name": r[8], "keeper_id": keeper[0],
+                            "match_type": "phash"
+                        })
 
         # ── Layer 4: Fuzzy Video Matching بـ Union-Find ──
         if use_fuzzy:
