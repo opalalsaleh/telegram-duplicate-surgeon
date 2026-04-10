@@ -402,7 +402,7 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     info = {
         "id": msg.id, "file_id": None, "file_unique_id": None,
         "size": 0, "duration": 0, "width": 0, "height": 0,
-        "mime": "", "type": "", "date": msg.date.isoformat(),
+        "mime": "", "type": "", "date": msg.date.isoformat() if msg.date else "",
         "md5": None, "phash": None, "views": msg.views or 0, "name": None
     }
 
@@ -544,11 +544,22 @@ class Database:
         videos = []
         for r in rows:
             videos.append({
-                "msg_id": r[0], "size": r[1], "date": r[2], "file_id": r[3],
-                "file_unique_id": r[4], "duration": r[5], "width": r[6], "height": r[7],
-                "phash": r[8], "type": r[9], "mime": r[10], "name": r[11], "md5": r[12]
+                "msg_id": r[0],
+                "size": r[1] or 0,
+                "date": r[2] or "",
+                "file_id": r[3] or "",
+                "file_unique_id": r[4] or "",
+                "duration": r[5] or 0,
+                "width": r[6] or 0,
+                "height": r[7] or 0,
+                "phash": r[8] or "",
+                "type": r[9] or "",
+                "mime": r[10] or "",
+                "name": r[11] or "",
+                "md5": r[12] or ""
             })
 
+        # الفرز حسب استراتيجية الاحتفاظ
         if keep_strategy == "oldest":
             videos.sort(key=lambda x: x["date"])
         elif keep_strategy == "newest":
@@ -1081,7 +1092,7 @@ elif st.session_state.step == 'results':
                 "معرف": d['id'],
                 "النوع": d['type'],
                 "الحجم": fmt_size(d['size']),
-                "التاريخ": d['date'][:10],
+                "التاريخ": d['date'][:10] if d.get('date') else "—",
                 "اسم الملف": (d['name'][:25] + "…" if d['name'] and len(d['name']) > 25 else d['name']) or "—",
                 "سبب التكرار": d.get('match_type', '—'),
                 "تحديد": False
@@ -1125,7 +1136,7 @@ elif st.session_state.step == 'results':
         with col_sel3:
             if st.button("📥 تحميل تقرير CSV", use_container_width=True):
                 df_report = pd.DataFrame([
-                    {"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']), "التاريخ": d['date']}
+                    {"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']), "التاريخ": d.get('date', '')[:10]}
                     for d in duplicates
                 ])
                 st.download_button("اضغط للتحميل", df_report.to_csv(index=False).encode('utf-8-sig'),
