@@ -7,7 +7,7 @@ import sqlite3
 import tempfile
 import time
 import threading
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import pandas as pd
 from telethon import TelegramClient
@@ -26,315 +26,85 @@ except ImportError:
 # ================== تهيئة الصفحة ==================
 st.set_page_config(page_title="DupZap – مزيل المكررات", page_icon="✂️", layout="wide")
 
-# ================== نظام التكرار الضبابي (Fuzzy Duplicate Detection) ==================
-def safe_int(value) -> int:
-    """تحويل القيمة إلى int بشكل آمن، مع التعامل مع None والنصوص الفارغة."""
-    try:
-        return int(value or 0)
-    except (ValueError, TypeError):
-        return 0
-
-def make_bucket(v: Dict) -> Tuple[int, int]:
-    """تقسيم الفيديوهات لمجموعات لتقليل عدد المقارنات."""
-    duration = safe_int(v.get("duration"))
-    size = safe_int(v.get("size"))
-    return (duration // 3, size // 2_000_000)
-
-def fuzzy_video_score(a: Dict, b: Dict) -> float:
-    """حساب درجة التشابه بين فيديوهين (0-100) - نسخة خفيفة مع حماية ضد القيم غير الرقمية."""
-    score = 0.0
-
-    # --- المدة ---
-    d1 = safe_int(a.get("duration"))
-    d2 = safe_int(b.get("duration"))
-    diff = abs(d1 - d2)
-    if diff == 0:
-        score += 50
-    elif diff <= 1:
-        score += 40
-    elif diff <= 2:
-        score += 30
-    elif diff <= 3:
-        score += 15
-    elif diff <= 5:
-        score += 5
-    else:
-        return 0
-
-    # --- الحجم ---
-    s1 = safe_int(a.get("size"))
-    s2 = safe_int(b.get("size"))
-    if s1 > 0 and s2 > 0:
-        ratio = abs(s1 - s2) / max(s1, s2)
-        if ratio < 0.05:
-            score += 30
-        elif ratio < 0.12:
-            score += 20
-        elif ratio < 0.25:
-            score += 10
-
-    # --- الأبعاد ونسبة الطول إلى العرض ---
-    w1 = safe_int(a.get("width"))
-    h1 = safe_int(a.get("height"))
-    w2 = safe_int(b.get("width"))
-    h2 = safe_int(b.get("height"))
-    if w1 > 0 and h1 > 0 and w2 > 0 and h2 > 0:
-        ar1 = max(w1, h1) / min(w1, h1)
-        ar2 = max(w2, h2) / min(w2, h2)
-        if abs(ar1 - ar2) < 0.05:
-            score += 20
-        elif abs(ar1 - ar2) < 0.1:
-            score += 10
-
-    return score
-
-def group_videos_by_bucket(videos: List[Dict]) -> Dict[Tuple[int, int], List[Dict]]:
-    buckets = {}
-    for v in videos:
-        key = make_bucket(v)
-        if key not in buckets:
-            buckets[key] = []
-        buckets[key].append(v)
-    return buckets
-
-def find_fuzzy_duplicates(videos: List[Dict], threshold: float = 75) -> List[Dict]:
-    duplicates = []
-    seen = set()
-    buckets = group_videos_by_bucket(videos)
-    for bucket_videos in buckets.values():
-        if len(bucket_videos) > 200:
-            continue
-        for i in range(len(bucket_videos)):
-            for j in range(i + 1, len(bucket_videos)):
-                a = bucket_videos[i]
-                b = bucket_videos[j]
-                if abs(safe_int(a.get("duration")) - safe_int(b.get("duration"))) > 5:
-                    continue
-                pair = tuple(sorted((a["msg_id"], b["msg_id"])))
-                if pair in seen:
-                    continue
-                seen.add(pair)
-                score = fuzzy_video_score(a, b)
-                if score >= threshold:
-                    duplicates.append({
-                        "dup": b,
-                        "original": a,
-                        "score": score,
-                        "match_type": f"fuzzy ({score:.0f})"
-                    })
-    return duplicates
-
-# ================== التنسيق العام ==================
 st.html("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
-
     html, body, [class*="css"], .stApp {
         font-family: 'IBM Plex Sans Arabic', 'Segoe UI', system-ui, sans-serif;
     }
+    .stApp { background: #f8fafc; }
+    .main .block-container { padding-top: 2rem; max-width: 960px; }
 
-    .stApp {
-        background: #f8fafc;
-    }
-    .main .block-container {
-        padding-top: 2rem;
-        max-width: 960px;
-    }
-
-    [data-testid="stSidebar"] {
-        background: #0f172a !important;
-    }
-    [data-testid="stSidebar"] > div:first-child {
-        padding: 0;
-    }
+    [data-testid="stSidebar"] { background: #0f172a !important; }
+    [data-testid="stSidebar"] > div:first-child { padding: 0; }
     [data-testid="stSidebar"] * { color: #cbd5e1 !important; }
     [data-testid="stSidebar"] hr { border-color: #1e293b !important; margin: 0.75rem 0 !important; }
-
     [data-testid="stSidebar"] .stButton > button {
-        background: transparent !important;
-        border: 1px solid #1e293b !important;
-        color: #94a3b8 !important;
-        border-radius: 8px;
-        font-weight: 500;
-        font-size: 0.85rem;
-        transition: all 0.15s;
+        background: transparent !important; border: 1px solid #1e293b !important;
+        color: #94a3b8 !important; border-radius: 8px; font-weight: 500; font-size: 0.85rem;
     }
     [data-testid="stSidebar"] .stButton > button:hover {
-        background: #1e293b !important;
-        border-color: #334155 !important;
-        color: #e2e8f0 !important;
-        transform: none;
-        box-shadow: none;
+        background: #1e293b !important; border-color: #334155 !important; color: #e2e8f0 !important;
     }
-
-    .sidebar-logo {
-        text-align: center;
-        padding: 28px 16px 20px;
-        border-bottom: 1px solid #1e293b;
-        margin-bottom: 8px;
-    }
-    .sidebar-logo .logo-icon {
-        font-size: 2.6rem;
-        line-height: 1;
-        display: block;
-        margin-bottom: 10px;
-    }
+    .sidebar-logo { text-align:center; padding:28px 16px 20px; border-bottom:1px solid #1e293b; margin-bottom:8px; }
+    .sidebar-logo .logo-icon { font-size:2.6rem; line-height:1; display:block; margin-bottom:10px; }
     .sidebar-logo .logo-name {
-        font-size: 1.45rem;
-        font-weight: 700;
-        background: linear-gradient(90deg, #38bdf8 0%, #818cf8 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        display: block;
-        margin-bottom: 3px;
+        font-size:1.45rem; font-weight:700;
+        background:linear-gradient(90deg,#38bdf8 0%,#818cf8 100%);
+        -webkit-background-clip:text; -webkit-text-fill-color:transparent; display:block; margin-bottom:3px;
     }
-    .sidebar-logo .logo-ver {
-        font-size: 0.72rem;
-        color: #475569 !important;
-        letter-spacing: 0.04em;
-    }
+    .sidebar-logo .logo-ver { font-size:0.72rem; color:#475569 !important; letter-spacing:0.04em; }
 
-    .user-chip {
-        background: #1e293b;
-        border-radius: 10px;
-        padding: 10px 14px;
-        margin: 8px 0;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    h1 {
-        font-size: 2rem !important;
-        font-weight: 700 !important;
-        color: #0f172a !important;
-        letter-spacing: -0.02em;
-        margin-bottom: 0 !important;
-    }
-    h2, h3 { font-weight: 600 !important; color: #1e293b !important; }
-
-    .stApp [data-testid="stCaptionContainer"] p {
-        color: #64748b;
-        font-size: 0.88rem;
-    }
+    h1 { font-size:2rem !important; font-weight:700 !important; color:#0f172a !important; letter-spacing:-0.02em; margin-bottom:0 !important; }
+    h2, h3 { font-weight:600 !important; color:#1e293b !important; }
 
     .stButton > button {
-        border-radius: 9px;
-        font-weight: 600;
-        font-size: 0.88rem;
-        min-height: 42px;
-        transition: all 0.18s cubic-bezier(.4,0,.2,1);
-        border: 1.5px solid #e2e8f0 !important;
-        background: #ffffff !important;
-        color: #374151 !important;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        border-radius:9px; font-weight:600; font-size:0.88rem; min-height:42px;
+        transition:all 0.18s cubic-bezier(.4,0,.2,1); border:1.5px solid #e2e8f0 !important;
+        background:#ffffff !important; color:#374151 !important; box-shadow:0 1px 3px rgba(0,0,0,0.06);
     }
     .stButton > button:hover {
-        border-color: #cbd5e1 !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.09) !important;
-        transform: translateY(-1px);
-        color: #0f172a !important;
+        border-color:#cbd5e1 !important; box-shadow:0 4px 12px rgba(0,0,0,0.09) !important;
+        transform:translateY(-1px); color:#0f172a !important;
     }
-    .stButton > button:active { transform: translateY(0); }
-
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%) !important;
-        color: #ffffff !important;
-        border: none !important;
-        box-shadow: 0 3px 12px rgba(99,102,241,0.30) !important;
+        background:linear-gradient(135deg,#0ea5e9 0%,#6366f1 100%) !important;
+        color:#ffffff !important; border:none !important; box-shadow:0 3px 12px rgba(99,102,241,0.30) !important;
     }
     .stButton > button[kind="primary"]:hover {
-        box-shadow: 0 6px 20px rgba(99,102,241,0.40) !important;
-        transform: translateY(-2px);
-        color: #ffffff !important;
+        box-shadow:0 6px 20px rgba(99,102,241,0.40) !important; transform:translateY(-2px); color:#ffffff !important;
     }
 
     [data-testid="metric-container"] {
-        background: #ffffff;
-        border-radius: 14px;
-        padding: 20px 16px;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-        transition: box-shadow 0.2s;
+        background:#ffffff; border-radius:14px; padding:20px 16px;
+        border:1px solid #e2e8f0; box-shadow:0 1px 4px rgba(0,0,0,0.05); transition:box-shadow 0.2s;
     }
-    [data-testid="metric-container"]:hover {
-        box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-    }
-    [data-testid="stMetricLabel"] { color: #64748b !important; font-size: 0.82rem !important; }
-    [data-testid="stMetricValue"] { color: #0f172a !important; font-weight: 700 !important; }
+    [data-testid="metric-container"]:hover { box-shadow:0 4px 16px rgba(0,0,0,0.08); }
+    [data-testid="stMetricLabel"] { color:#64748b !important; font-size:0.82rem !important; }
+    [data-testid="stMetricValue"] { color:#0f172a !important; font-weight:700 !important; }
 
-    .stTextInput > div > div > input,
-    .stNumberInput > div > div > input,
-    .stSelectbox > div > div {
-        border-radius: 9px !important;
-        border: 1.5px solid #e2e8f0 !important;
-        background: #ffffff !important;
-        font-size: 0.9rem;
-        transition: border-color 0.15s, box-shadow 0.15s;
+    .stTextInput > div > div > input, .stNumberInput > div > div > input, .stSelectbox > div > div {
+        border-radius:9px !important; border:1.5px solid #e2e8f0 !important;
+        background:#ffffff !important; font-size:0.9rem;
     }
-    .stTextInput > div > div > input:focus,
-    .stNumberInput > div > div > input:focus {
-        border-color: #6366f1 !important;
-        box-shadow: 0 0 0 3px rgba(99,102,241,0.12) !important;
-        outline: none !important;
-    }
-    .stTextInput label, .stNumberInput label,
-    .stSelectbox label, .stMultiSelect label,
-    .stCheckbox label, .stToggle label {
-        font-size: 0.85rem !important;
-        font-weight: 600 !important;
-        color: #374151 !important;
-    }
-
-    hr { border-color: #f1f5f9 !important; margin: 1.5rem 0 !important; }
-
+    hr { border-color:#f1f5f9 !important; margin:1.5rem 0 !important; }
     [data-testid="stForm"] {
-        background: #ffffff;
-        border-radius: 16px;
-        padding: 28px !important;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        background:#ffffff; border-radius:16px; padding:28px !important;
+        border:1px solid #e2e8f0; box-shadow:0 2px 8px rgba(0,0,0,0.05);
     }
-
-    .stDataEditor {
-        border-radius: 12px !important;
-        overflow: hidden;
-        border: 1px solid #e2e8f0 !important;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    }
-
+    .stDataEditor { border-radius:12px !important; overflow:hidden; border:1px solid #e2e8f0 !important; }
     .stProgress > div > div > div > div {
-        background: linear-gradient(90deg, #0ea5e9, #6366f1) !important;
-        border-radius: 99px;
+        background:linear-gradient(90deg,#0ea5e9,#6366f1) !important; border-radius:99px;
     }
-
-    [data-testid="stAlert"] {
-        border-radius: 10px !important;
-        border-width: 1px !important;
-    }
-
+    [data-testid="stAlert"] { border-radius:10px !important; border-width:1px !important; }
     .footer-bar {
-        text-align: center;
-        padding: 20px;
-        color: #94a3b8;
-        font-size: 0.8rem;
-        margin-top: 40px;
-        border-top: 1px solid #f1f5f9;
+        text-align:center; padding:20px; color:#94a3b8; font-size:0.8rem;
+        margin-top:40px; border-top:1px solid #f1f5f9;
     }
-    .footer-bar strong { color: #64748b; font-weight: 600; }
-
-    .match-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 99px;
-        font-size: 0.75rem;
-        font-weight: 600;
-    }
-
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #f8fafc; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
-    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .footer-bar strong { color:#64748b; font-weight:600; }
+    ::-webkit-scrollbar { width:6px; height:6px; }
+    ::-webkit-scrollbar-track { background:#f8fafc; }
+    ::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:99px; }
 </style>
 """)
 
@@ -368,16 +138,77 @@ def fmt_size(n: int) -> str:
 def get_thumb(media):
     if isinstance(media, MessageMediaPhoto):
         if not media.photo: return None
-        for size in media.photo.sizes:
-            if isinstance(size, PhotoSize) and hasattr(size, 'type') and size.type == 'm':
-                return size
+        for s in media.photo.sizes:
+            if isinstance(s, PhotoSize) and getattr(s, 'type', '') == 'm': return s
         sizes = [s for s in media.photo.sizes if hasattr(s, 'size')]
         return min(sizes, key=lambda s: s.size) if sizes else None
-    elif isinstance(media, MessageMediaDocument):
+    if isinstance(media, MessageMediaDocument):
         doc = media.document
-        if doc and doc.thumbs:
-            return min(doc.thumbs, key=lambda t: getattr(t, 'size', 0))
+        if doc and doc.thumbs: return min(doc.thumbs, key=lambda t: getattr(t, 'size', 0))
     return None
+
+# ================== Fuzzy Video Matching — Surgical Duplicate ==================
+
+def is_surgical_duplicate(a: dict, b: dict, threshold: float = 0.85) -> bool:
+    """
+    مقارنة فيديوين بـ scoring مرجّح بدل hard thresholds.
+
+    المدة  — وزن 60% (الأدق لأنها ثابتة حتى بعد إعادة الترميز)
+    الحجم  — وزن 40% (يتغير بالضغط لكن يبقى قريباً)
+    threshold افتراضي 0.85 → دقة عالية وfalse positives أقل
+    """
+    d1 = float(a.get("duration", 0))
+    d2 = float(b.get("duration", 0))
+    s1 = int(a.get("size", 0))
+    s2 = int(b.get("size", 0))
+
+    # رفض فيديوهات بدون metadata — لا مقارنة ممكنة
+    if d1 == 0 or d2 == 0 or s1 == 0 or s2 == 0:
+        return False
+
+    # فلتر سريع: فرق المدة > 3 ثوان = مستحيل أن يكونا نفس الفيديو
+    if abs(d1 - d2) > 3:
+        return False
+
+    # score المدة (60%)
+    dur_diff = abs(d1 - d2)
+    if dur_diff == 0:     dur_score = 1.0
+    elif dur_diff <= 1:   dur_score = 0.7
+    else:                 dur_score = 0.3   # فرق 2-3 ثوان — مريب
+
+    # score الحجم (40%)
+    size_ratio = abs(s1 - s2) / max(s1, s2)
+    if size_ratio < 0.02:   size_score = 1.0   # تطابق شبه تام
+    elif size_ratio < 0.08: size_score = 0.7   # ضغط طفيف
+    elif size_ratio < 0.20: size_score = 0.4   # ضغط واضح
+    else:                   size_score = 0.0   # مختلفان جداً → رفض
+
+    score = dur_score * 0.6 + size_score * 0.4
+    return score >= threshold
+
+
+class _UnionFind:
+    """
+    Union-Find لمنع التعديم الزائف (Transitive Matching).
+    بدونه: A≈B و B≈C → يحذف B وC حتى لو A وC مختلفان.
+    معه: كل المتشابهين يُجمعون في مجموعة واحدة صحيحة.
+    """
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.rank   = [0] * n
+
+    def find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, x, y):
+        rx, ry = self.find(x), self.find(y)
+        if rx == ry: return
+        if self.rank[rx] < self.rank[ry]: rx, ry = ry, rx
+        self.parent[ry] = rx
+        if self.rank[rx] == self.rank[ry]: self.rank[rx] += 1
 
 # ================== دوال Telethon async ==================
 async def _make_client(api_id, api_hash, session_string=None):
@@ -403,8 +234,7 @@ async def _get_entity(client, channel_input):
         from telethon.tl.functions.messages import CheckChatInviteRequest
         hash_part = channel_input.split("/+")[-1] if "/+" in channel_input else channel_input.split("/joinchat/")[-1]
         result = await client(CheckChatInviteRequest(hash_part))
-        if hasattr(result, 'chat'):
-            return result.chat
+        if hasattr(result, 'chat'): return result.chat
         raise Exception("تعذّر الوصول — تأكد أنك عضو في المجموعة أولاً")
     return await client.get_entity(channel_input)
 
@@ -420,15 +250,15 @@ async def _delete_messages(client, channel, ids):
 def get_session_string(client):
     return client.session.save()
 
-# ================== استخراج معلومات الملف (بدون بوت) ==================
+# ================== استخراج معلومات الملف ==================
 async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash: bool) -> Optional[Dict]:
     media = msg.media
     if not media: return None
 
     info = {
-        "id": msg.id, "file_id": None, "file_unique_id": None,
-        "size": 0, "duration": 0, "width": 0, "height": 0,
-        "mime": "", "type": "", "date": msg.date.isoformat() if msg.date else "",
+        "id": msg.id, "file_id": None,
+        "size": 0, "duration": 0,
+        "mime": "", "type": "", "date": msg.date.isoformat(),
         "md5": None, "phash": None, "views": msg.views or 0, "name": None
     }
 
@@ -441,12 +271,8 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
                            else "image" if info["mime"].startswith("image/")
                            else "document")
         for attr in doc.attributes:
-            if isinstance(attr, DocumentAttributeVideo):
-                info["duration"] = attr.duration or 0
-                info["width"]    = attr.w or 0
-                info["height"]   = attr.h or 0
-            if hasattr(attr, 'file_name'):
-                info["name"] = attr.file_name
+            if isinstance(attr, DocumentAttributeVideo): info["duration"] = attr.duration or 0
+            if hasattr(attr, 'file_name'): info["name"] = attr.file_name
 
     elif isinstance(media, MessageMediaPhoto):
         photo = media.photo
@@ -458,14 +284,6 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     else:
         return None
 
-    # إنشاء file_unique_id احتياطي (بدون بوت)
-    if info["type"] == "video" and info["size"] > 0:
-        info["file_unique_id"] = f"v:{info['size']}:{int(info['duration'])}"
-    elif info["type"] == "photo":
-        info["file_unique_id"] = f"p:{media.photo.id}"
-    else:
-        info["file_unique_id"] = f"d:{media.document.id}"
-
     if compute_md5 or compute_phash:
         thumb = get_thumb(media) if compute_phash else None
         data = None
@@ -473,13 +291,11 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
             if thumb:
                 data = await client.download_media(thumb, file=bytes)
             else:
-                limit = PHASH_SIZE_LIMIT if compute_phash else None
-                data = await client.download_media(msg, file=bytes, size=limit)
-
-            if compute_md5 and info["size"] <= MD5_SIZE_LIMIT:
+                data = await client.download_media(msg, file=bytes,
+                                                   size=PHASH_SIZE_LIMIT if compute_phash else None)
+            if compute_md5 and info["size"] <= MD5_SIZE_LIMIT and data:
                 info["md5"] = hashlib.md5(data).hexdigest()
-
-            if compute_phash and _HAS_IMAGEHASH and info["type"] in ("photo", "image"):
+            if compute_phash and _HAS_IMAGEHASH and info["type"] in ("photo", "image") and data:
                 try:
                     with io.BytesIO(data) as bio:
                         with Image.open(bio) as img:
@@ -503,23 +319,14 @@ class Database:
         self._init_tables()
 
     def _init_tables(self):
-        # إنشاء الجدول الأساسي
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_files (
-                channel_id INTEGER, msg_id INTEGER, file_id TEXT, file_unique_id TEXT,
-                file_size INTEGER, duration INTEGER,
-                md5_hash TEXT, phash TEXT,
+                channel_id INTEGER, msg_id INTEGER, file_id TEXT,
+                file_size INTEGER, duration INTEGER, md5_hash TEXT, phash TEXT,
                 msg_date TEXT, file_type TEXT, mime_type TEXT, views INTEGER, file_name TEXT,
                 PRIMARY KEY (channel_id, msg_id)
             ) WITHOUT ROWID
         """)
-        # إضافة أعمدة width, height بأمان (للتوافق مع الإصدارات السابقة)
-        for col in ("width", "height"):
-            try:
-                self.conn.execute(f"ALTER TABLE seen_files ADD COLUMN {col} INTEGER")
-            except sqlite3.OperationalError:
-                pass  # العمود موجود مسبقاً
-
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS resume_meta (
                 channel_id INTEGER PRIMARY KEY,
@@ -545,8 +352,7 @@ class Database:
         self.conn.commit()
 
     def buffer_insert(self, record):
-        # record يجب أن يحتوي على 15 قيمة
-        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
+        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", record)
         self.conn.commit()
 
     def delete_msg_records(self, channel_id, msg_ids):
@@ -556,94 +362,136 @@ class Database:
         )
         self.conn.commit()
 
-    def stream_duplicates(self, channel_id, keep_strategy, min_size=0, use_md5=False, use_phash=False, use_fuzzy=True, fuzzy_threshold=75):
-        query = """
-            SELECT msg_id, file_size, msg_date, file_id, file_unique_id, duration,
-                   width, height, phash, file_type, mime_type, file_name, md5_hash
-            FROM seen_files
-            WHERE channel_id=? AND file_size>=?
-        """
-        rows = self.conn.execute(query, (channel_id, min_size)).fetchall()
-        if not rows:
-            return []
+    def get_all_videos(self, channel_id, min_size=0) -> List[Dict]:
+        """يجلب كل الفيديوهات للمقارنة الـ Fuzzy"""
+        rows = self.conn.execute(
+            "SELECT msg_id, file_id, file_size, duration, msg_date, file_name "
+            "FROM seen_files WHERE channel_id=? AND file_type='video' AND file_size>=?",
+            (channel_id, min_size)
+        ).fetchall()
+        return [
+            {"id": r[0], "file_id": r[1], "size": r[2], "duration": r[3],
+             "date": r[4], "name": r[5], "type": "video"}
+            for r in rows
+        ]
 
-        videos = []
-        for r in rows:
-            videos.append({
-                "msg_id": r[0],
-                "size": safe_int(r[1]),
-                "date": r[2] or "",
-                "file_id": r[3] or "",
-                "file_unique_id": r[4] or "",
-                "duration": safe_int(r[5]),
-                "width": safe_int(r[6]),
-                "height": safe_int(r[7]),
-                "phash": r[8] or "",
-                "type": r[9] or "",
-                "mime": r[10] or "",
-                "name": r[11] or "",
-                "md5": r[12] or ""
-            })
+    def stream_duplicates(self, channel_id, keep_strategy, min_size=0,
+                          use_md5=False, use_phash=False, use_fuzzy=False,
+                          fuzzy_threshold=0.85):
+        order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
+        duplicates = []
+        seen_msg_ids: set = set()  # لتجنب إضافة نفس الرسالة مرتين
 
-        # الفرز حسب استراتيجية الاحتفاظ
-        if keep_strategy == "oldest":
-            videos.sort(key=lambda x: x["date"])
-        elif keep_strategy == "newest":
-            videos.sort(key=lambda x: x["date"], reverse=True)
-        elif keep_strategy == "largest":
-            videos.sort(key=lambda x: x["size"], reverse=True)
+        def add_group(group, match_type):
+            keeper = group[0]
+            for dup in group[1:]:
+                mid = dup[0]
+                if mid not in seen_msg_ids:
+                    seen_msg_ids.add(mid)
+                    duplicates.append({
+                        "id": mid, "size": dup[1], "date": dup[2], "file_id": dup[3],
+                        "duration": dup[4], "phash": dup[5], "type": dup[6],
+                        "mime": dup[7], "name": dup[8], "keeper_id": keeper[0],
+                        "match_type": match_type
+                    })
 
-        duplicates_map = {}
+        # ── Layer 1: file_id متطابق (نفس الرسالة مُعاد توجيهها) ──
+        cursor = self.conn.execute(
+            "SELECT file_id FROM seen_files WHERE channel_id=? AND file_size>=? "
+            "GROUP BY file_id HAVING COUNT(*)>1",
+            (channel_id, min_size)
+        )
+        for row in cursor:
+            group = self.conn.execute(
+                f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                f"FROM seen_files WHERE channel_id=? AND file_id=? ORDER BY {order}",
+                (channel_id, row[0])
+            ).fetchall()
+            add_group(group, "file_id")
 
-        if use_fuzzy:
-            fuzzy_dups = find_fuzzy_duplicates(videos, fuzzy_threshold)
-            for d in fuzzy_dups:
-                dup = d["dup"]
-                orig = d["original"]
-                mid = dup["msg_id"]
-                if mid not in duplicates_map:
-                    duplicates_map[mid] = {
-                        "id": mid, "size": dup["size"], "date": dup["date"], "file_id": dup["file_id"],
-                        "file_unique_id": dup["file_unique_id"], "duration": dup["duration"],
-                        "phash": dup["phash"], "type": dup["type"], "mime": dup["mime"],
-                        "name": dup["name"], "keeper_id": orig["msg_id"],
-                        "match_type": d["match_type"]
-                    }
-
-        def add_duplicates_from_group(group_func, match_type):
-            groups = {}
-            for v in videos:
-                key = group_func(v)
-                if key is None: continue
-                groups.setdefault(key, []).append(v)
-            for key, group in groups.items():
-                if len(group) < 2: continue
-                if keep_strategy == "oldest":
-                    group.sort(key=lambda x: x["date"])
-                elif keep_strategy == "newest":
-                    group.sort(key=lambda x: x["date"], reverse=True)
-                elif keep_strategy == "largest":
-                    group.sort(key=lambda x: x["size"], reverse=True)
-                keeper = group[0]
-                for dup in group[1:]:
-                    mid = dup["msg_id"]
-                    if mid not in duplicates_map:
-                        duplicates_map[mid] = {
-                            "id": mid, "size": dup["size"], "date": dup["date"],
-                            "file_id": dup["file_id"], "file_unique_id": dup["file_unique_id"],
-                            "duration": dup["duration"], "phash": dup["phash"], "type": dup["type"],
-                            "mime": dup["mime"], "name": dup["name"], "keeper_id": keeper["msg_id"],
-                            "match_type": match_type
-                        }
-
-        add_duplicates_from_group(lambda v: v["file_id"], "file_id")
-        add_duplicates_from_group(lambda v: v["file_unique_id"], "file_unique_id")
+        # ── Layer 2: MD5 ──
         if use_md5:
-            add_duplicates_from_group(lambda v: v["md5"], "md5")
-        if use_phash and _HAS_IMAGEHASH:
-            add_duplicates_from_group(lambda v: v["phash"], "phash")
+            cursor = self.conn.execute(
+                "SELECT md5_hash FROM seen_files WHERE channel_id=? AND md5_hash IS NOT NULL AND file_size>=? "
+                "GROUP BY md5_hash HAVING COUNT(DISTINCT file_id)>1",
+                (channel_id, min_size)
+            )
+            for row in cursor:
+                group = self.conn.execute(
+                    f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                    f"FROM seen_files WHERE channel_id=? AND md5_hash=? ORDER BY {order}",
+                    (channel_id, row[0])
+                ).fetchall()
+                add_group(group, "md5")
 
-        return list(duplicates_map.values())
+        # ── Layer 3: pHash ──
+        if use_phash and _HAS_IMAGEHASH:
+            cursor = self.conn.execute(
+                "SELECT phash FROM seen_files WHERE channel_id=? AND phash IS NOT NULL AND file_size>=? "
+                "GROUP BY phash HAVING COUNT(DISTINCT file_id)>1",
+                (channel_id, min_size)
+            )
+            for row in cursor:
+                group = self.conn.execute(
+                    f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                    f"FROM seen_files WHERE channel_id=? AND phash=? ORDER BY {order}",
+                    (channel_id, row[0])
+                ).fetchall()
+                add_group(group, "phash")
+
+        # ── Layer 4: Fuzzy Video Matching بـ Union-Find ──
+        if use_fuzzy:
+            videos = self.get_all_videos(channel_id, min_size)
+
+            # رتّب حسب الاستراتيجية لتحديد الـ keeper (الأول في الترتيب)
+            sort_key = {"oldest": lambda v: v["date"],
+                        "newest": lambda v: v["date"],
+                        "largest": lambda v: v["size"]}[keep_strategy]
+            reverse = keep_strategy == "newest"
+            videos.sort(key=sort_key, reverse=reverse)
+
+            n = len(videos)
+            uf = _UnionFind(n)
+
+            # O(n²) للمقارنة لكن الـ Union-Find يمنع التعديم الزائف
+            for i in range(n):
+                if videos[i]["id"] in seen_msg_ids: continue
+                for j in range(i + 1, n):
+                    if videos[j]["id"] in seen_msg_ids: continue
+                    if videos[i]["file_id"] == videos[j]["file_id"]: continue  # Layer 1 يغطيه
+                    if is_surgical_duplicate(videos[i], videos[j], fuzzy_threshold):
+                        uf.union(i, j)
+
+            # اجمع المجموعات
+            groups: Dict[int, List[int]] = {}
+            for idx in range(n):
+                root = uf.find(idx)
+                groups.setdefault(root, []).append(idx)
+
+            for root, members in groups.items():
+                if len(members) < 2: continue
+                # الأول في القائمة هو الـ keeper (مرتبون مسبقاً)
+                keeper_idx  = members[0]
+                keeper_id   = videos[keeper_idx]["id"]
+                for idx in members[1:]:
+                    dup = videos[idx]
+                    if dup["id"] in seen_msg_ids: continue
+                    seen_msg_ids.add(dup["id"])
+                    row = self.conn.execute(
+                        "SELECT msg_id, file_size, msg_date, file_id, duration, phash, "
+                        "file_type, mime_type, file_name "
+                        "FROM seen_files WHERE channel_id=? AND msg_id=?",
+                        (channel_id, dup["id"])
+                    ).fetchone()
+                    if row:
+                        duplicates.append({
+                            "id": row[0], "size": row[1], "date": row[2], "file_id": row[3],
+                            "duration": row[4], "phash": row[5], "type": row[6],
+                            "mime": row[7], "name": row[8], "keeper_id": keeper_id,
+                            "match_type": "fuzzy"
+                        })
+
+        return duplicates
 
     def clear_channel(self, channel_id):
         self.conn.execute("DELETE FROM seen_files WHERE channel_id=?", (channel_id,))
@@ -666,16 +514,15 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ================== الشريط الجانبي (Sidebar) ==================
+# ================== الشريط الجانبي ==================
 with st.sidebar:
     st.html("""
     <div class='sidebar-logo'>
         <div class='logo-icon'>✂️</div>
         <div class='logo-name'>DupZap</div>
-        <div class='logo-ver'>v4.0 · Telegram</div>
+        <div class='logo-ver'>v5.0 · Telegram</div>
     </div>
     """)
-
     st.divider()
 
     if st.session_state.client and st.session_state.step not in ['login', 'verify_code']:
@@ -684,80 +531,59 @@ with st.sidebar:
                 st.session_state.me = run_sync(st.session_state.client.get_me())
             me = st.session_state.me
             st.markdown(f"**👤 {me.first_name}**")
-            if me.username:
-                st.markdown(f"@{me.username}")
-        except:
-            pass
+            if me.username: st.markdown(f"@{me.username}")
+        except: pass
 
         if st.session_state.session_string:
             with st.expander("🔑 Session String"):
-                st.caption("احفظها واستخدمها للدخول المباشر بدون SMS")
+                st.caption("احفظها للدخول بدون SMS في المرة القادمة")
                 st.code(st.session_state.session_string, language=None)
 
     if st.session_state.channel:
-        channel = st.session_state.channel
-        st.markdown(f"**📢 {getattr(channel, 'title', 'قناة')}**")
+        st.markdown(f"**📢 {getattr(st.session_state.channel, 'title', 'قناة')}**")
 
     st.divider()
 
     current_step = st.session_state.step
-
     if current_step == 'verify_code':
-        if st.button("⬅️ العودة لتسجيل الدخول", use_container_width=True, key="nav_back_login"):
-            st.session_state.step = 'login'
-            st.rerun()
-
-    elif current_step == 'channel':
-        if st.button("🚪 تسجيل الخروج", use_container_width=True, key="nav_logout"):
-            for key in ['client', 'me', 'phone', 'api_id', 'api_hash', 'session_string']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.session_state.step = 'login'
-            st.rerun()
-
+        if st.button("⬅️ تسجيل الدخول", use_container_width=True):
+            st.session_state.step = 'login'; st.rerun()
     elif current_step == 'scanning':
-        if st.button("⬅️ تغيير القناة", use_container_width=True, key="nav_back_channel"):
+        if st.button("⬅️ تغيير القناة", use_container_width=True):
             st.session_state.step = 'channel'
-            st.session_state.auto_scan_running = False
-            st.rerun()
-
+            st.session_state.auto_scan_running = False; st.rerun()
     elif current_step == 'results':
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("⬅️ مسح", use_container_width=True, key="nav_back_scan"):
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("⬅️ مسح", use_container_width=True):
                 st.session_state.step = 'scanning'
-                st.session_state.selected_ids = set()
-                st.rerun()
-        with col2:
-            if st.button("📋 قناة", use_container_width=True, key="nav_back_channel2"):
+                st.session_state.selected_ids = set(); st.rerun()
+        with c2:
+            if st.button("📋 قناة", use_container_width=True):
                 st.session_state.step = 'channel'
-                st.session_state.selected_ids = set()
-                st.rerun()
+                st.session_state.selected_ids = set(); st.rerun()
 
     st.divider()
-
     if current_step not in ['login', 'verify_code']:
-        if st.button("🚪 تسجيل الخروج", use_container_width=True, key="nav_logout_bottom"):
-            for key in ['client', 'me', 'phone', 'api_id', 'api_hash', 'session_string']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.session_state.step = 'login'
-            st.rerun()
+        if st.button("🚪 تسجيل الخروج", use_container_width=True):
+            for k in ['client', 'me', 'phone', 'api_id', 'api_hash', 'session_string']:
+                st.session_state.pop(k, None)
+            st.session_state.step = 'login'; st.rerun()
 
-    st.markdown("---")
-    st.markdown("<p style='text-align:center; font-size:0.8rem; color:#64748b;'>© F.ALSALEH</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center;font-size:0.8rem;color:#64748b;margin-top:8px;'>© F.ALSALEH</p>",
+                unsafe_allow_html=True)
 
 # ================== المحتوى الرئيسي ==================
 st.html("""
-<div style="padding: 8px 0 24px;">
-  <div style="display:flex; align-items:center; gap:12px; margin-bottom:4px;">
+<div style="padding:8px 0 24px;">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
     <span style="font-size:2rem;">✂️</span>
-    <span style="font-size:1.9rem; font-weight:700; color:#0f172a; letter-spacing:-0.02em;">DupZap</span>
-    <span style="background:#f1f5f9; color:#64748b; font-size:0.72rem; font-weight:600;
-                 padding:3px 10px; border-radius:99px; letter-spacing:0.04em; margin-top:4px;">v4.0</span>
+    <span style="font-size:1.9rem;font-weight:700;color:#0f172a;letter-spacing:-0.02em;">DupZap</span>
+    <span style="background:#f1f5f9;color:#64748b;font-size:0.72rem;font-weight:600;
+                 padding:3px 10px;border-radius:99px;letter-spacing:0.04em;margin-top:4px;">v5.0</span>
   </div>
-  <p style="color:#64748b; font-size:0.88rem; margin:0;">
-    كشف المكررات عبر: File ID · File Unique ID · MD5 · pHash · الذكاء الضبابي (Fuzzy)
+  <p style="color:#64748b;font-size:0.88rem;margin:0;">
+    كشف المكررات عبر: File ID · MD5 · pHash · Fuzzy Video
   </p>
 </div>
 """)
@@ -800,7 +626,7 @@ if st.session_state.step == 'login':
 
     with tab_session:
         with st.form("session_form"):
-            st.caption("ادخل الـ Session String المحفوظة من جلسة سابقة — بدون حاجة لرمز SMS")
+            st.caption("ادخل الـ Session String المحفوظة — بدون حاجة لرمز SMS")
             s_api_id   = st.text_input("API ID*", type="password", key="s_api_id")
             s_api_hash = st.text_input("API Hash*", type="password", key="s_api_hash")
             s_session  = st.text_area("Session String*", placeholder="1BVtsOK...", height=100, key="s_session")
@@ -818,11 +644,11 @@ if st.session_state.step == 'login':
                             st.session_state.step     = 'channel'
                             st.rerun()
                         else:
-                            st.error("الجلسة منتهية أو غير صالحة، استخدم تبويب رقم الهاتف")
+                            st.error("الجلسة منتهية، استخدم تبويب رقم الهاتف")
                     except Exception as e:
                         st.error(f"خطأ: {e}")
 
-# ---------- إدخال رمز OTP ----------
+# ---------- OTP ----------
 elif st.session_state.step == 'verify_code':
     with st.form("verify_form"):
         st.subheader("📲 تأكيد الحساب")
@@ -831,11 +657,8 @@ elif st.session_state.step == 'verify_code':
         password = st.text_input("كلمة مرور 2FA (إن وجدت)", type="password")
         if st.form_submit_button("تأكيد", use_container_width=True):
             try:
-                client = run_sync(_make_client(
-                    st.session_state.api_id,
-                    st.session_state.api_hash,
-                    st.session_state.session_string
-                ))
+                client = run_sync(_make_client(st.session_state.api_id, st.session_state.api_hash,
+                                               st.session_state.session_string))
                 run_sync(_sign_in(client, st.session_state.phone, code, st.session_state.phone_code_hash))
                 st.session_state.session_string = get_session_string(client)
                 st.session_state.client = client
@@ -846,11 +669,8 @@ elif st.session_state.step == 'verify_code':
                     st.error("الحساب محمي بـ 2FA، أدخل كلمة المرور")
                 else:
                     try:
-                        client = run_sync(_make_client(
-                            st.session_state.api_id,
-                            st.session_state.api_hash,
-                            st.session_state.session_string
-                        ))
+                        client = run_sync(_make_client(st.session_state.api_id, st.session_state.api_hash,
+                                                       st.session_state.session_string))
                         run_sync(_sign_in_password(client, password))
                         st.session_state.session_string = get_session_string(client)
                         st.session_state.client = client
@@ -861,59 +681,91 @@ elif st.session_state.step == 'verify_code':
             except Exception as e:
                 st.error(f"رمز غير صحيح: {e}")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔄 إعادة إرسال الرمز", use_container_width=True):
-            try:
-                client = run_sync(_make_client(
-                    st.session_state.api_id,
-                    st.session_state.api_hash,
-                    st.session_state.session_string
-                ))
-                sent = run_sync(_send_code(client, st.session_state.phone))
-                st.session_state.phone_code_hash = sent.phone_code_hash
-                st.session_state.session_string  = get_session_string(client)
-                st.session_state.client = client
-                st.success("✅ تم إعادة إرسال الرمز")
-            except Exception as e:
-                st.error(f"خطأ: {e}")
+    st.markdown("---")
+    if st.button("🔄 إعادة إرسال الرمز"):
+        try:
+            client = run_sync(_make_client(st.session_state.api_id, st.session_state.api_hash,
+                                           st.session_state.session_string))
+            sent = run_sync(_send_code(client, st.session_state.phone))
+            st.session_state.phone_code_hash = sent.phone_code_hash
+            st.session_state.session_string  = get_session_string(client)
+            st.session_state.client = client
+            st.success("✅ تم إعادة إرسال الرمز")
+        except Exception as e:
+            st.error(f"خطأ: {e}")
 
-# ---------- اختيار القناة والإعدادات ----------
+# ---------- إعدادات القناة ----------
 elif st.session_state.step == 'channel':
-    st.html("<div style='padding:4px 0 16px;'><span style='color:#10b981; font-size:0.9rem; font-weight:600;'>✓ تم تسجيل الدخول بنجاح</span></div>")
+    st.success("✅ تم تسجيل الدخول")
     with st.form("channel_form"):
-        st.subheader("📡 إعدادات القناة والمسح")
-        channel_input = st.text_input("رابط القناة*", placeholder="@username أو https://t.me/+xxx")
+        channel_input = st.text_input("رابط القناة / المجموعة*", placeholder="@username أو https://t.me/+xxx")
 
         col1, col2 = st.columns(2)
         with col1:
-            media_types   = st.multiselect("أنواع الملفات", ["photo", "video", "document"], default=["photo", "video"])
-            keep_strategy = st.selectbox("استراتيجية الاحتفاظ", ["oldest (الأقدم)", "newest (الأحدث)", "largest (الأكبر)"])
-            keep_strategy_map = {"oldest (الأقدم)": "oldest", "newest (الأحدث)": "newest", "largest (الأكبر)": "largest"}
+            media_types   = st.multiselect("أنواع الملفات", ["photo", "video", "document"],
+                                           default=["photo", "video"])
+            keep_strategy = st.selectbox("استراتيجية الاحتفاظ",
+                                         ["oldest (الأقدم)", "newest (الأحدث)", "largest (الأكبر)"])
+            keep_map = {"oldest (الأقدم)": "oldest", "newest (الأحدث)": "newest", "largest (الأكبر)": "largest"}
         with col2:
             min_size_mb = st.number_input("الحد الأدنى للحجم (MB)", 0.0, 10000.0, 0.0, step=1.0)
             auto_mode   = st.toggle("الوضع الآلي", False, help="يفحص القناة كاملاً دفعة بعد دفعة بشكل تلقائي")
 
         st.markdown("---")
         st.subheader("🔬 طبقات اكتشاف التكرار")
-        st.caption("كلما زادت الطبقات زادت الدقة لكن المسح يصبح أبطأ")
+        st.caption("Layer 1 (File ID) دائماً مفعّل — فعّل طبقات إضافية حسب الحاجة")
 
         col_a, col_b = st.columns(2)
         with col_a:
-            st.markdown("✅ **File ID + File Unique ID** (أساسي، سريع جداً)")
-            compute_md5 = st.checkbox("🔐 MD5 Hash – تطابق المحتوى", value=False,
+            st.markdown("✅ **File ID** — تطابق مباشر (Forward)")
+            compute_md5 = st.checkbox("🔐 MD5 — تطابق المحتوى البايتي",
                                       help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
         with col_b:
-            compute_phash = st.checkbox("🖼️ pHash – تشابه بصري للصور", value=_HAS_IMAGEHASH,
-                                        disabled=not _HAS_IMAGEHASH,
-                                        help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها. يستخدم الصور المصغرة.")
+            compute_phash = st.checkbox("🖼️ pHash — تشابه بصري للصور",
+                                        value=_HAS_IMAGEHASH, disabled=not _HAS_IMAGEHASH,
+                                        help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
 
         st.markdown("---")
-        st.subheader("🧠 الذكاء الضبابي (Fuzzy Detection)")
-        use_fuzzy = st.checkbox("تفعيل الكشف الضبابي عن الفيديوهات المتشابهة", value=True,
-                                help="يكتشف الفيديوهات المتشابهة حتى لو اختلفت دقتها أو حجمها قليلاً. (موصى به)")
-        fuzzy_threshold = st.slider("عتبة التشابه الضبابي", 50, 95, 75, 5,
-                                    help="كلما ارتفعت العتبة زادت الدقة وقلت النتائج. 75 قيمة موصى بها.")
+        st.subheader("🎬 Fuzzy Video Matching")
+        st.caption("يكتشف الفيديوهات المكررة حتى لو أُعيد رفعها — بناءً على المدة والحجم")
+
+        use_fuzzy = st.toggle("تفعيل Fuzzy Video Matching", value=False,
+                              help="يكتشف الفيديوهات المرفوعة من جديد — scoring مرجّح: المدة 60% + الحجم 40%")
+
+        fuzzy_threshold = 0.85
+        if use_fuzzy:
+            st.markdown("""
+            <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:9px;
+                        padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#0369a1;">
+            ⚙️ <b>كيف يعمل؟</b> يعطي كل زوج فيديوهات score من 0→1 &nbsp;|&nbsp;
+            المدة (60%) + الحجم (40%)<br>
+            فرق المدة &gt; 3 ثوان = رفض فوري · score ≥ الحد = مكرر
+            </div>
+            """, unsafe_allow_html=True)
+
+            fuzzy_threshold = st.slider(
+                "الحد الأدنى للـ Score (دقة الكشف)",
+                min_value=0.70, max_value=0.99, value=0.85, step=0.01, format="%.2f",
+                help="0.85 موصى به · ارفعه لتقليل false positives · اخفضه لكشف أكثر"
+            )
+            col_t1, col_t2, col_t3 = st.columns(3)
+            with col_t1:
+                bg = "#dcfce7" if fuzzy_threshold >= 0.85 else "#fef9c3"
+                st.html(f"""<div style="background:{bg};border-radius:8px;padding:8px;
+                            text-align:center;font-size:0.79rem;">
+                <b>المدة → score</b><br>تطابق تام → 0.60<br>فرق 1ث → 0.42<br>فرق 2-3ث → 0.18</div>""")
+            with col_t2:
+                st.html("""<div style="background:#f1f5f9;border-radius:8px;padding:8px;
+                           text-align:center;font-size:0.79rem;">
+                <b>الحجم → score</b><br>&lt;2% فرق → 0.40<br>&lt;8% فرق → 0.28<br>&lt;20% فرق → 0.16</div>""")
+            with col_t3:
+                verdict = ("🟢 صارم جداً" if fuzzy_threshold >= 0.90
+                           else "🟡 متوازن" if fuzzy_threshold >= 0.80
+                           else "🔴 متساهل")
+                st.html(f"""<div style="background:#f8fafc;border-radius:8px;padding:8px;
+                            text-align:center;font-size:0.79rem;">
+                <b>الحد الحالي</b><br>{fuzzy_threshold:.2f}<br>{verdict}</div>""")
+            st.caption("مثال: فيديو مدته 120ث وحجمه يختلف 25% → score=0.60 → لا يُعتبر مكرراً عند 0.85")
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
@@ -923,16 +775,16 @@ elif st.session_state.step == 'channel':
             st.session_state.db_path = tmp.name
             st.success("✅ تم تحميل قاعدة البيانات")
 
-        if st.form_submit_button("🚀 بدء المسح", use_container_width=True):
+        if st.form_submit_button("🚀 بدء المسح", use_container_width=True, type="primary"):
             if not channel_input:
                 st.error("أدخل رابط القناة")
             else:
                 try:
                     entity = run_sync(_get_entity(st.session_state.client, channel_input.strip()))
-                    st.session_state.channel = entity
+                    st.session_state.channel     = entity
                     st.session_state.scan_params = {
                         'media_types': media_types,
-                        'keep_strategy': keep_strategy_map[keep_strategy],
+                        'keep_strategy': keep_map[keep_strategy],
                         'min_size_mb': min_size_mb,
                         'compute_md5': compute_md5,
                         'compute_phash': compute_phash,
@@ -975,22 +827,16 @@ elif st.session_state.step == 'scanning':
                 should_scan = True
         else:
             if st.button("⏹️ إيقاف الوضع الآلي", type="primary", use_container_width=True):
-                st.session_state.auto_scan_running = False
-                st.rerun()
-
+                st.session_state.auto_scan_running = False; st.rerun()
     with col_btn2:
         if st.button("📋 عرض المكررات", use_container_width=True):
-            st.session_state.step = 'results'
-            st.rerun()
-
+            st.session_state.step = 'results'; st.rerun()
     with col_btn3:
         with open(st.session_state.db_path, "rb") as f:
             st.download_button("📥 تحميل DB", f, file_name=f"scan_{channel.id}.db", use_container_width=True)
-
     with col_btn4:
-        if st.button("🔄 فحص من البداية", use_container_width=True, help="يمسح بيانات هذه القناة ويبدأ الفحص من أول رسالة"):
-            st.session_state._confirm_rescan = True
-            st.rerun()
+        if st.button("🔄 فحص من البداية", use_container_width=True):
+            st.session_state._confirm_rescan = True; st.rerun()
 
     if st.session_state.get('_confirm_rescan'):
         st.warning("⚠️ سيتم مسح كل بيانات هذه القناة والبدء من الصفر. هل أنت متأكد؟")
@@ -1000,29 +846,27 @@ elif st.session_state.step == 'scanning':
                 db_reset = Database(st.session_state.db_path)
                 db_reset.clear_channel(channel.id)
                 db_reset.close()
-                st.session_state.total_scanned    = 0
-                st.session_state.files_saved      = 0
-                st.session_state.scan_speed       = 0.0
-                st.session_state.selected_ids     = set()
-                st.session_state.auto_scan_running = False
-                st.session_state._confirm_rescan  = False
-                st.success("✅ تم مسح البيانات — الفحص سيبدأ من أول رسالة")
+                st.session_state.total_scanned     = 0
+                st.session_state.files_saved        = 0
+                st.session_state.scan_speed         = 0.0
+                st.session_state.selected_ids       = set()
+                st.session_state.auto_scan_running  = False
+                st.session_state._confirm_rescan    = False
                 st.rerun()
         with c2:
             if st.button("❌ إلغاء", use_container_width=True):
-                st.session_state._confirm_rescan = False
-                st.rerun()
+                st.session_state._confirm_rescan = False; st.rerun()
 
     if should_scan:
         db = Database(st.session_state.db_path)
         last_id, _, _ = db.get_resume_state(channel.id)
-        offset_id = 0 if last_id == 0 else last_id + 1
-        client    = st.session_state.client
-        progress  = st.progress(0, text="جاري الفحص...")
+        offset_id  = 0 if last_id == 0 else last_id + 1
+        client     = st.session_state.client
+        progress   = st.progress(0, text="جاري الفحص...")
         start_time = time.time()
         try:
             messages = run_sync(_get_messages(client, channel, offset_id, BATCH_SCAN_SIZE))
-            elapsed = time.time() - start_time
+            elapsed  = time.time() - start_time
             if messages:
                 st.session_state.scan_speed = len(messages) / elapsed if elapsed > 0 else 0
 
@@ -1046,9 +890,8 @@ elif st.session_state.step == 'scanning':
                     if info['size'] < params['min_size_mb'] * 1024 * 1024: continue
                     saved += 1
                     db.buffer_insert((
-                        channel.id, info['id'], info['file_id'], info['file_unique_id'], info['size'],
-                        info['duration'], info['width'], info['height'],
-                        info['md5'], info['phash'], info['date'],
+                        channel.id, info['id'], info['file_id'], info['size'],
+                        info['duration'], info['md5'], info['phash'], info['date'],
                         info['type'], info['mime'], info['views'], info['name']
                     ))
                 st.session_state.total_scanned += scanned
@@ -1058,8 +901,7 @@ elif st.session_state.step == 'scanning':
                 st.info(f"دفعة: فحص {scanned} رسالة، حُفظ {saved} ملف")
 
                 if st.session_state.auto_scan_running and scanned == BATCH_SCAN_SIZE:
-                    time.sleep(0.5)
-                    st.rerun()
+                    time.sleep(0.5); st.rerun()
                 elif st.session_state.auto_scan_running:
                     st.success("✅ الوضع الآلي: تم الانتهاء من كل الرسائل!")
                     st.session_state.auto_scan_running = False
@@ -1079,48 +921,65 @@ elif st.session_state.step == 'results':
     db      = Database(st.session_state.db_path)
 
     duplicates = db.stream_duplicates(
-        channel.id, params['keep_strategy'],
+        channel.id,
+        params['keep_strategy'],
         int(params['min_size_mb'] * 1024 * 1024),
         use_md5=params.get('compute_md5', False),
         use_phash=params.get('compute_phash', False),
-        use_fuzzy=params.get('use_fuzzy', True),
-        fuzzy_threshold=params.get('fuzzy_threshold', 75)
+        use_fuzzy=params.get('use_fuzzy', False),
+        fuzzy_threshold=params.get('fuzzy_threshold', 0.85),
     )
 
-    st.html(f"<h3 style='margin:0 0 16px; color:#0f172a;'>📋 {getattr(channel, 'title', str(channel.id))}</h3>")
+    st.html(f"<h3 style='margin:0 0 16px;color:#0f172a;'>📋 {getattr(channel, 'title', str(channel.id))}</h3>")
 
     if st.session_state.last_deleted_count > 0:
-        st.success(f"✅ تم حذف {st.session_state.last_deleted_count} رسالة بنجاح")
+        st.success(f"✅ تم حذف {st.session_state.last_deleted_count} رسالة بنجاح من تيليجرام وقاعدة البيانات")
         if st.session_state.last_deleted_failed > 0:
             st.warning(f"⚠️ فشل حذف {st.session_state.last_deleted_failed} رسالة")
-        st.session_state.last_deleted_count = 0
+        st.session_state.last_deleted_count  = 0
         st.session_state.last_deleted_failed = 0
 
     if not duplicates:
         st.success("🎉 لا توجد مكررات!")
     else:
+        # إحصاء حسب نوع الطبقة
+        type_counts = {}
+        for d in duplicates:
+            mt = d.get('match_type', 'file_id')
+            type_counts[mt] = type_counts.get(mt, 0) + 1
+
+        badge_map = {
+            "file_id": "🔗 File ID (Forward)",
+            "md5":     "🔐 MD5",
+            "phash":   "🖼️ pHash",
+            "fuzzy":   "🎬 Fuzzy Video",
+        }
+        summary = " · ".join(f"{badge_map.get(k,k)}: {v}" for k, v in type_counts.items())
+
         st.html(f"""
-        <div style="display:inline-flex; align-items:center; gap:8px; background:#fff7ed;
-                    border:1px solid #fed7aa; border-radius:10px; padding:10px 16px; margin-bottom:16px;">
+        <div style="display:inline-flex;align-items:center;gap:8px;background:#fff7ed;
+                    border:1px solid #fed7aa;border-radius:10px;padding:10px 16px;margin-bottom:16px;">
           <span style="font-size:1.1rem;">⚠️</span>
-          <span style="color:#c2410c; font-weight:600; font-size:0.95rem;">
-            {len(duplicates)} رسالة مكررة
+          <span style="color:#c2410c;font-weight:600;font-size:0.95rem;">
+            {len(duplicates)} رسالة مكررة — {summary}
           </span>
         </div>
         """)
 
-        page = st.session_state.page
+        page        = st.session_state.page
         total_pages = max(1, (len(duplicates) + PAGE_SIZE - 1) // PAGE_SIZE)
-        page_dups = duplicates[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+        page_dups   = duplicates[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
+        badge_short = {"file_id": "🔗 Forward", "md5": "🔐 MD5", "phash": "🖼️ pHash", "fuzzy": "🎬 Fuzzy"}
         df = pd.DataFrame([
             {
                 "معرف": d['id'],
                 "النوع": d['type'],
                 "الحجم": fmt_size(d['size']),
-                "التاريخ": d['date'][:10] if d.get('date') else "—",
-                "اسم الملف": (d['name'][:25] + "…" if d['name'] and len(d['name']) > 25 else d['name']) or "—",
-                "سبب التكرار": d.get('match_type', '—'),
+                "المدة (ث)": d['duration'] if d['duration'] else "—",
+                "التاريخ": d['date'][:10],
+                "سبب التكرار": badge_short.get(d.get('match_type', 'file_id'), '🔗'),
+                "الأصل": d['keeper_id'],
                 "تحديد": False
             }
             for d in page_dups
@@ -1128,9 +987,7 @@ elif st.session_state.step == 'results':
         edited = st.data_editor(
             df,
             column_config={"تحديد": st.column_config.CheckboxColumn("🗑️ حذف")},
-            hide_index=True,
-            use_container_width=True,
-            height=400
+            hide_index=True, use_container_width=True, height=400
         )
         for sid in edited[edited["تحديد"] == True]["معرف"].tolist():
             st.session_state.selected_ids.add(sid)
@@ -1139,78 +996,72 @@ elif st.session_state.step == 'results':
             pcol1, pcol2, pcol3 = st.columns(3)
             with pcol1:
                 if page > 0 and st.button("⬅️ السابقة", use_container_width=True):
-                    st.session_state.page -= 1
-                    st.rerun()
+                    st.session_state.page -= 1; st.rerun()
             with pcol2:
-                st.markdown(f"<p style='text-align:center;'>صفحة {page + 1} من {total_pages}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='text-align:center;'>صفحة {page+1} من {total_pages}</p>",
+                            unsafe_allow_html=True)
             with pcol3:
                 if page < total_pages - 1 and st.button("➡️ التالية", use_container_width=True):
-                    st.session_state.page += 1
-                    st.rerun()
+                    st.session_state.page += 1; st.rerun()
 
         st.markdown("---")
-        col_sel1, col_sel2, col_sel3 = st.columns(3)
-        with col_sel1:
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
             if st.button("☑️ تحديد الكل في الصفحة", use_container_width=True):
-                for d in page_dups:
-                    st.session_state.selected_ids.add(d['id'])
+                for d in page_dups: st.session_state.selected_ids.add(d['id'])
                 st.rerun()
-        with col_sel2:
+        with col_s2:
             if st.button("✖️ إلغاء تحديد الكل", use_container_width=True):
-                st.session_state.selected_ids = set()
-                st.rerun()
-        with col_sel3:
-            if st.button("📥 تحميل تقرير CSV", use_container_width=True):
-                df_report = pd.DataFrame([
-                    {"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']), "التاريخ": d.get('date', '')[:10]}
-                    for d in duplicates
-                ])
-                st.download_button("اضغط للتحميل", df_report.to_csv(index=False).encode('utf-8-sig'),
-                                   "duplicates_report.csv", "text/csv", use_container_width=True)
+                st.session_state.selected_ids = set(); st.rerun()
+        with col_s3:
+            df_report = pd.DataFrame([
+                {"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']),
+                 "التاريخ": d['date'], "سبب التكرار": d.get('match_type', '')}
+                for d in duplicates
+            ])
+            st.download_button("📥 تقرير CSV", df_report.to_csv(index=False).encode('utf-8-sig'),
+                               "duplicates_report.csv", "text/csv", use_container_width=True)
 
         selected_count = len(st.session_state.selected_ids)
         if selected_count > 0:
             st.html(f"""
-            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:9px;
-                        padding:10px 16px; margin:12px 0; color:#166534; font-weight:600; font-size:0.9rem;">
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
+                        padding:10px 16px;margin:12px 0;color:#166534;font-weight:600;font-size:0.9rem;">
               📌 محدد للحذف: {selected_count} رسالة
             </div>
             """)
 
-        if st.button(f"🗑️ حذف {selected_count} رسالة محددة", type="primary", disabled=selected_count == 0, use_container_width=True):
-            if selected_count == 0:
-                st.warning("لم تحدد أي رسائل")
-            else:
-                ids = list(st.session_state.selected_ids)
-                prog = st.progress(0, text="جاري الحذف...")
-                deleted = 0
-                failed = 0
-                for i in range(0, len(ids), BATCH_DELETE_SIZE):
-                    batch = ids[i:i + BATCH_DELETE_SIZE]
+        if st.button(f"🗑️ حذف {selected_count} رسالة محددة",
+                     type="primary", disabled=selected_count == 0, use_container_width=True):
+            ids     = list(st.session_state.selected_ids)
+            prog    = st.progress(0, text="جاري الحذف...")
+            deleted = 0
+            failed  = 0
+            for i in range(0, len(ids), BATCH_DELETE_SIZE):
+                batch = ids[i:i + BATCH_DELETE_SIZE]
+                try:
+                    run_sync(_delete_messages(st.session_state.client, channel, batch))
+                    db.delete_msg_records(channel.id, batch)
+                    deleted += len(batch)
+                except FloodWaitError as e:
+                    st.warning(f"⏳ انتظار {e.seconds}s")
+                    time.sleep(e.seconds)
                     try:
                         run_sync(_delete_messages(st.session_state.client, channel, batch))
                         db.delete_msg_records(channel.id, batch)
                         deleted += len(batch)
-                    except FloodWaitError as e:
-                        st.warning(f"⏳ انتظار {e.seconds}s")
-                        time.sleep(e.seconds)
-                        try:
-                            run_sync(_delete_messages(st.session_state.client, channel, batch))
-                            db.delete_msg_records(channel.id, batch)
-                            deleted += len(batch)
-                        except Exception:
-                            failed += len(batch)
-                    except Exception:
-                        failed += len(batch)
-                    prog.progress((i + len(batch)) / len(ids))
+                    except Exception: failed += len(batch)
+                except Exception: failed += len(batch)
+                prog.progress((i + len(batch)) / len(ids))
 
-                st.session_state.last_deleted_count = deleted
-                st.session_state.last_deleted_failed = failed
-                st.session_state.selected_ids = set()
-                db.close()
-                st.rerun()
+            st.session_state.last_deleted_count  = deleted
+            st.session_state.last_deleted_failed = failed
+            st.session_state.selected_ids = set()
+            db.close()
+            st.rerun()
 
     db.close()
 
 st.markdown("---")
-st.markdown("<div class='footer-bar'>صُنع بعناية بواسطة <strong>F.ALSALEH</strong> · DupZap v4.0</div>", unsafe_allow_html=True)
+st.markdown("<div class='footer-bar'>صُنع بعناية بواسطة <strong>F.ALSALEH</strong> · DupZap v5.0</div>",
+            unsafe_allow_html=True)
