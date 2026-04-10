@@ -36,36 +36,29 @@ st.set_page_config(page_title="DupZap – مزيل المكررات", page_icon=
 _BOT_TOKEN: str = st.secrets.get("bot_token", "")
 
 async def _bot_get_file_unique_id(chat_id: int, message_id: int) -> Optional[str]:
-    """يستخدم Bot API لجلب file_unique_id الثابت الذي يضمنه تيليجرام."""
+    """يستخدم Bot API لجلب file_unique_id الثابت — بدون forward."""
     if not _BOT_TOKEN or not _HAS_HTTPX:
         return None
     try:
         async with httpx.AsyncClient(timeout=15) as http:
-            # نعمل forward للرسالة على نفس الشات ونقرأ الـ file_unique_id
             r = await http.post(
-                f"https://api.telegram.org/bot{_BOT_TOKEN}/forwardMessage",
-                json={"chat_id": chat_id, "from_chat_id": chat_id, "message_id": message_id}
+                f"https://api.telegram.org/bot{_BOT_TOKEN}/getMessages",
+                json={"chat_id": chat_id, "message_ids": [message_id]}
             )
             data = r.json()
             if not data.get("ok"):
                 return None
-            msg = data["result"]
-            fuid = None
+            messages = data.get("result", [])
+            if not messages:
+                return None
+            msg = messages[0]
             for key in ("video", "document", "audio", "animation", "photo"):
                 media = msg.get(key)
                 if media:
-                    fuid = (media[-1] if isinstance(media, list) else media).get("file_unique_id")
-                    break
-            # نحذف الرسالة المحوّلة فوراً
-            fwd_id = msg.get("message_id")
-            if fwd_id:
-                await http.post(
-                    f"https://api.telegram.org/bot{_BOT_TOKEN}/deleteMessage",
-                    json={"chat_id": chat_id, "message_id": fwd_id}
-                )
-            return fuid
+                    return (media[-1] if isinstance(media, list) else media).get("file_unique_id")
     except Exception:
         return None
+    return None
 
 def bot_get_file_unique_id(chat_id: int, message_id: int) -> Optional[str]:
     future = asyncio.run_coroutine_threadsafe(
@@ -85,7 +78,7 @@ async def _bot_diagnose(chat_id: int, message_id: int) -> dict:
         "getme": None, "getme_error": None,
         "forward": None, "forward_error": None,
         "file_unique_id": None,
-        "delete": None,
+        "delete": True,  # getMessages لا يحتاج حذف
     }
     if not _BOT_TOKEN:
         result["getme_error"] = "bot_token غير موجود في st.secrets"
@@ -104,18 +97,23 @@ async def _bot_diagnose(chat_id: int, message_id: int) -> dict:
                 result["getme_error"] = me.get("description", "فشل getMe")
                 return result
 
-            # 2. forwardMessage
+            # 2. getMessages مباشرة بدون forward
             r2 = await http.post(
-                f"https://api.telegram.org/bot{_BOT_TOKEN}/forwardMessage",
-                json={"chat_id": chat_id, "from_chat_id": chat_id, "message_id": message_id}
+                f"https://api.telegram.org/bot{_BOT_TOKEN}/getMessages",
+                json={"chat_id": chat_id, "message_ids": [message_id]}
             )
-            fwd = r2.json()
-            if not fwd.get("ok"):
-                result["forward_error"] = fwd.get("description", "فشل forwardMessage")
+            gm = r2.json()
+            if not gm.get("ok"):
+                result["forward_error"] = gm.get("description", "فشل getMessages")
                 return result
 
-            msg = fwd["result"]
-            result["forward"] = f"رسالة #{msg.get('message_id')} تم تحويلها"
+            messages = gm.get("result", [])
+            if not messages:
+                result["forward_error"] = "الرسالة غير موجودة أو البوت لا يملك صلاحية القراءة"
+                return result
+
+            msg = messages[0]
+            result["forward"] = f"رسالة #{msg.get('message_id')} قُرئت بنجاح"
 
             # 3. استخراج file_unique_id
             for key in ("video", "document", "audio", "animation", "photo"):
@@ -125,14 +123,6 @@ async def _bot_diagnose(chat_id: int, message_id: int) -> dict:
                     result["file_unique_id"] = fuid
                     break
 
-            # 4. حذف الرسالة المحوّلة
-            fwd_id = msg.get("message_id")
-            if fwd_id:
-                r3 = await http.post(
-                    f"https://api.telegram.org/bot{_BOT_TOKEN}/deleteMessage",
-                    json={"chat_id": chat_id, "message_id": fwd_id}
-                )
-                result["delete"] = r3.json().get("ok")
     except Exception as e:
         result["getme_error"] = str(e)
     return result
@@ -1102,12 +1092,11 @@ elif st.session_state.step == 'scanning':
 
                     # عرض النتائج
                     rows = [
-                        ("bot_token في secrets",  "✅" if diag.get("token_set")  else "❌ غير موجود"),
-                        ("مكتبة httpx",            "✅" if diag.get("httpx_ok")   else "❌ غير مثبّتة"),
-                        ("getMe (البوت نفسه)",     f"✅ {diag['getme']}" if diag.get("getme") else f"❌ {diag.get('getme_error','')}"),
-                        ("forwardMessage",         f"✅ {diag['forward']}" if diag.get("forward") else f"❌ {diag.get('forward_error','لم يُنفَّذ')}"),
-                        ("file_unique_id",         f"✅ `{diag['file_unique_id']}`" if diag.get("file_unique_id") else "❌ لم يُستخرج"),
-                        ("حذف الرسالة المحوّلة",  "✅" if diag.get("delete") else "⚠️ لم يُحذف"),
+                        ("bot_token في secrets",   "✅" if diag.get("token_set")  else "❌ غير موجود"),
+                        ("مكتبة httpx",             "✅" if diag.get("httpx_ok")   else "❌ غير مثبّتة"),
+                        ("getMe (البوت نفسه)",      f"✅ {diag['getme']}" if diag.get("getme") else f"❌ {diag.get('getme_error','')}"),
+                        ("قراءة الرسالة (getMessages)", f"✅ {diag['forward']}" if diag.get("forward") else f"❌ {diag.get('forward_error','لم يُنفَّذ')}"),
+                        ("file_unique_id",          f"✅ `{diag['file_unique_id']}`" if diag.get("file_unique_id") else "❌ لم يُستخرج"),
                     ]
                     for label, val in rows:
                         icon = "🟢" if val.startswith("✅") else ("🔴" if val.startswith("❌") else "🟡")
@@ -1116,7 +1105,7 @@ elif st.session_state.step == 'scanning':
                     if not diag.get("getme"):
                         st.error("البوت لا يستجيب — تحقق من صحة bot_token في st.secrets")
                     elif not diag.get("forward"):
-                        st.error("البوت لا يستطيع قراءة القناة — تأكد أنه **عضو مشرف** في القناة")
+                        st.error("البوت لا يستطيع قراءة القناة — تأكد أنه **عضو مشرف** وصلاحية **نشر الرسائل** مفعّلة")
                     elif not diag.get("file_unique_id"):
                         st.warning("البوت يعمل لكن الرسالة لا تحتوي على ملف — جرّب معرّف رسالة فيديو أخرى")
                     else:
