@@ -19,6 +19,11 @@ from telethon.tl.types import (
 )
 from PIL import Image
 try:
+    import httpx
+    _HAS_HTTPX = True
+except ImportError:
+    _HAS_HTTPX = False
+try:
     import imagehash
     _HAS_IMAGEHASH = True
 except ImportError:
@@ -26,6 +31,51 @@ except ImportError:
 
 # ================== تهيئة الصفحة ==================
 st.set_page_config(page_title="DupZap – مزيل المكررات", page_icon="✂️", layout="wide")
+
+# ================== Bot Token من st.secrets (للـ file_unique_id فقط) ==================
+_BOT_TOKEN: str = st.secrets.get("bot_token", "")
+
+async def _bot_get_file_unique_id(chat_id: int, message_id: int) -> Optional[str]:
+    """يستخدم Bot API لجلب file_unique_id الثابت الذي يضمنه تيليجرام."""
+    if not _BOT_TOKEN or not _HAS_HTTPX:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            # نعمل forward للرسالة على نفس الشات ونقرأ الـ file_unique_id
+            r = await http.post(
+                f"https://api.telegram.org/bot{_BOT_TOKEN}/forwardMessage",
+                json={"chat_id": chat_id, "from_chat_id": chat_id, "message_id": message_id}
+            )
+            data = r.json()
+            if not data.get("ok"):
+                return None
+            msg = data["result"]
+            fuid = None
+            for key in ("video", "document", "audio", "animation", "photo"):
+                media = msg.get(key)
+                if media:
+                    fuid = (media[-1] if isinstance(media, list) else media).get("file_unique_id")
+                    break
+            # نحذف الرسالة المحوّلة فوراً
+            fwd_id = msg.get("message_id")
+            if fwd_id:
+                await http.post(
+                    f"https://api.telegram.org/bot{_BOT_TOKEN}/deleteMessage",
+                    json={"chat_id": chat_id, "message_id": fwd_id}
+                )
+            return fuid
+    except Exception:
+        return None
+
+def bot_get_file_unique_id(chat_id: int, message_id: int) -> Optional[str]:
+    future = asyncio.run_coroutine_threadsafe(
+        _bot_get_file_unique_id(chat_id, message_id),
+        st.session_state._bg_loop
+    )
+    try:
+        return future.result(timeout=20)
+    except Exception:
+        return None
 
 # ================== التنسيق العام ==================
 st.html("""
@@ -375,7 +425,6 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     
     info = {
         "id": msg.id, "file_id": None, "file_unique_id": None,
-        "video_hash": None,   # حجم+مدة للفيديو
         "size": 0, "duration": 0,
         "mime": "", "type": "", "date": msg.date.isoformat(),
         "md5": None, "phash": None, "views": msg.views or 0, "name": None
@@ -394,12 +443,6 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
                 info["duration"] = attr.duration or 0
             if hasattr(attr, 'file_name'):
                 info["name"] = attr.file_name
-        # file_unique_id للفيديو: حجم_البايت:المدة_بالثانية — ثابت حتى لو أُعيد الرفع
-        # أدق من access_hash الذي يتغير بين الجلسات
-        if info["type"] == "video" and info["size"] > 0:
-            info["file_unique_id"] = f"v:{info['size']}:{int(info['duration'])}"
-        else:
-            info["file_unique_id"] = f"d:{doc.id}"
 
     elif isinstance(media, MessageMediaPhoto):
         photo = media.photo
@@ -408,9 +451,30 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
         info["mime"]    = "image/jpeg"
         sizes = [s for s in getattr(photo, "sizes", []) if hasattr(s, "size") and s.size > 0]
         info["size"] = max(sizes, key=lambda s: s.size).size if sizes else 0
-        info["file_unique_id"] = f"p:{photo.id}"  # الصور: photo.id ثابت عند إعادة الرفع
     else:
         return None
+
+    # ── جلب file_unique_id الحقيقي عبر البوت (الأولوية الأولى) ──
+    try:
+        peer = msg.peer_id
+        raw_id = getattr(peer, 'channel_id', None) or getattr(peer, 'chat_id', None)
+        if raw_id and _BOT_TOKEN:
+            bot_chat_id = int(f"-100{raw_id}") if hasattr(peer, 'channel_id') else -raw_id
+            fuid = bot_get_file_unique_id(bot_chat_id, msg.id)
+            if fuid:
+                info["file_unique_id"] = fuid
+    except Exception:
+        pass
+
+    # ── Fallback إذا فشل البوت ──
+    if not info["file_unique_id"]:
+        if info["type"] == "video" and info["size"] > 0:
+            # حجم + مدة = أفضل بصمة متاحة بدون بوت
+            info["file_unique_id"] = f"v:{info['size']}:{int(info['duration'])}"
+        elif info["type"] == "photo":
+            info["file_unique_id"] = f"p:{media.photo.id}"
+        else:
+            info["file_unique_id"] = f"d:{media.document.id}"
 
     if compute_md5 or compute_phash:
         thumb = get_thumb(media) if compute_phash else None
