@@ -77,6 +77,76 @@ def bot_get_file_unique_id(chat_id: int, message_id: int) -> Optional[str]:
     except Exception:
         return None
 
+async def _bot_diagnose(chat_id: int, message_id: int) -> dict:
+    """تشخيص شامل للبوت — يرجع dict بكل الخطوات ونتائجها."""
+    result = {
+        "token_set": bool(_BOT_TOKEN),
+        "httpx_ok": _HAS_HTTPX,
+        "getme": None, "getme_error": None,
+        "forward": None, "forward_error": None,
+        "file_unique_id": None,
+        "delete": None,
+    }
+    if not _BOT_TOKEN:
+        result["getme_error"] = "bot_token غير موجود في st.secrets"
+        return result
+    if not _HAS_HTTPX:
+        result["getme_error"] = "مكتبة httpx غير مثبّتة"
+        return result
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            # 1. getMe
+            r = await http.get(f"https://api.telegram.org/bot{_BOT_TOKEN}/getMe")
+            me = r.json()
+            if me.get("ok"):
+                result["getme"] = f"@{me['result']['username']} — {me['result']['first_name']}"
+            else:
+                result["getme_error"] = me.get("description", "فشل getMe")
+                return result
+
+            # 2. forwardMessage
+            r2 = await http.post(
+                f"https://api.telegram.org/bot{_BOT_TOKEN}/forwardMessage",
+                json={"chat_id": chat_id, "from_chat_id": chat_id, "message_id": message_id}
+            )
+            fwd = r2.json()
+            if not fwd.get("ok"):
+                result["forward_error"] = fwd.get("description", "فشل forwardMessage")
+                return result
+
+            msg = fwd["result"]
+            result["forward"] = f"رسالة #{msg.get('message_id')} تم تحويلها"
+
+            # 3. استخراج file_unique_id
+            for key in ("video", "document", "audio", "animation", "photo"):
+                media = msg.get(key)
+                if media:
+                    fuid = (media[-1] if isinstance(media, list) else media).get("file_unique_id")
+                    result["file_unique_id"] = fuid
+                    break
+
+            # 4. حذف الرسالة المحوّلة
+            fwd_id = msg.get("message_id")
+            if fwd_id:
+                r3 = await http.post(
+                    f"https://api.telegram.org/bot{_BOT_TOKEN}/deleteMessage",
+                    json={"chat_id": chat_id, "message_id": fwd_id}
+                )
+                result["delete"] = r3.json().get("ok")
+    except Exception as e:
+        result["getme_error"] = str(e)
+    return result
+
+def bot_diagnose(chat_id: int, message_id: int) -> dict:
+    future = asyncio.run_coroutine_threadsafe(
+        _bot_diagnose(chat_id, message_id),
+        st.session_state._bg_loop
+    )
+    try:
+        return future.result(timeout=30)
+    except Exception as e:
+        return {"error": str(e)}
+
 # ================== التنسيق العام ==================
 st.html("""
 <style>
@@ -1016,6 +1086,43 @@ elif st.session_state.step == 'scanning':
         if st.button("🔄 فحص من البداية", use_container_width=True, help="يمسح بيانات هذه القناة ويبدأ الفحص من أول رسالة"):
             st.session_state._confirm_rescan = True
             st.rerun()
+
+    # ── تشخيص البوت ──
+    with st.expander("🔍 تشخيص البوت"):
+        st.caption("تحقق من أن البوت يعمل بشكل صحيح ويستطيع جلب file_unique_id")
+        diag_msg_id = st.number_input("معرّف رسالة فيديو من القناة للاختبار", min_value=1, step=1, value=1, key="diag_msg_id")
+        if st.button("▶️ اختبر الآن", key="btn_diag"):
+            try:
+                peer = channel
+                raw_id = getattr(peer, 'id', None)
+                if raw_id:
+                    bot_chat_id = int(f"-100{raw_id}")
+                    with st.spinner("جارٍ الاختبار..."):
+                        diag = bot_diagnose(bot_chat_id, int(diag_msg_id))
+
+                    # عرض النتائج
+                    rows = [
+                        ("bot_token في secrets",  "✅" if diag.get("token_set")  else "❌ غير موجود"),
+                        ("مكتبة httpx",            "✅" if diag.get("httpx_ok")   else "❌ غير مثبّتة"),
+                        ("getMe (البوت نفسه)",     f"✅ {diag['getme']}" if diag.get("getme") else f"❌ {diag.get('getme_error','')}"),
+                        ("forwardMessage",         f"✅ {diag['forward']}" if diag.get("forward") else f"❌ {diag.get('forward_error','لم يُنفَّذ')}"),
+                        ("file_unique_id",         f"✅ `{diag['file_unique_id']}`" if diag.get("file_unique_id") else "❌ لم يُستخرج"),
+                        ("حذف الرسالة المحوّلة",  "✅" if diag.get("delete") else "⚠️ لم يُحذف"),
+                    ]
+                    for label, val in rows:
+                        icon = "🟢" if val.startswith("✅") else ("🔴" if val.startswith("❌") else "🟡")
+                        st.markdown(f"{icon} **{label}:** {val}")
+
+                    if not diag.get("getme"):
+                        st.error("البوت لا يستجيب — تحقق من صحة bot_token في st.secrets")
+                    elif not diag.get("forward"):
+                        st.error("البوت لا يستطيع قراءة القناة — تأكد أنه **عضو مشرف** في القناة")
+                    elif not diag.get("file_unique_id"):
+                        st.warning("البوت يعمل لكن الرسالة لا تحتوي على ملف — جرّب معرّف رسالة فيديو أخرى")
+                    else:
+                        st.success("✅ البوت يعمل بشكل كامل — سيُستخدم لجلب file_unique_id الحقيقي عند المسح")
+            except Exception as e:
+                st.error(f"خطأ: {e}")
 
     # تأكيد إعادة الفحص
     if st.session_state.get('_confirm_rescan'):
