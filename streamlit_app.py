@@ -35,10 +35,12 @@ def make_bucket(v: Dict) -> Tuple[int, int]:
     )
 
 def fuzzy_video_score(a: Dict, b: Dict) -> float:
-    """حساب درجة التشابه بين فيديوهين (0-100) - نسخة آمنة تماماً من الأخطاء."""
+    """
+    حساب درجة التشابه بين فيديوهين (0-100) - نسخة محسّنة ضد الإيجابيات الكاذبة.
+    """
     score = 0.0
-    
-    # --- المدة ---
+
+    # --- المدة (وزن أقل) ---
     d1 = a.get("duration", 0) or 0
     d2 = b.get("duration", 0) or 0
     try:
@@ -46,22 +48,22 @@ def fuzzy_video_score(a: Dict, b: Dict) -> float:
         d2 = int(d2)
     except (ValueError, TypeError):
         d1 = d2 = 0
-        
+
     diff = abs(d1 - d2)
     if diff == 0:
-        score += 50
-    elif diff <= 1:
-        score += 40
-    elif diff <= 2:
         score += 30
+    elif diff <= 1:
+        score += 25
+    elif diff <= 2:
+        score += 20
     elif diff <= 3:
-        score += 15
+        score += 10
     elif diff <= 5:
         score += 5
     else:
         return 0
 
-    # --- الحجم ---
+    # --- الحجم (أهمية أكبر) ---
     s1 = a.get("size", 0) or 0
     s2 = b.get("size", 0) or 0
     try:
@@ -69,22 +71,24 @@ def fuzzy_video_score(a: Dict, b: Dict) -> float:
         s2 = int(s2)
     except (ValueError, TypeError):
         s1 = s2 = 0
-        
+
     if s1 > 0 and s2 > 0:
         ratio = abs(s1 - s2) / max(s1, s2)
         if ratio < 0.05:
-            score += 30
+            score += 35
         elif ratio < 0.12:
-            score += 20
-        elif ratio < 0.25:
-            score += 10
+            score += 25
+        elif ratio < 0.20:
+            score += 15
+        elif ratio < 0.30:
+            score += 5
 
-    # --- نسبة الأبعاد (مع حماية كاملة) ---
+    # --- نسبة الأبعاد (مهمة جداً) ---
     w1 = a.get("width")
     h1 = a.get("height")
     w2 = b.get("width")
     h2 = b.get("height")
-    
+
     try:
         w1 = int(w1) if w1 is not None else 0
         h1 = int(h1) if h1 is not None else 0
@@ -96,11 +100,14 @@ def fuzzy_video_score(a: Dict, b: Dict) -> float:
     if w1 > 0 and h1 > 0 and w2 > 0 and h2 > 0:
         ar1 = max(w1, h1) / min(w1, h1)
         ar2 = max(w2, h2) / min(w2, h2)
-        if abs(ar1 - ar2) < 0.05:
+        diff_ar = abs(ar1 - ar2)
+        if diff_ar < 0.03:
+            score += 35
+        elif diff_ar < 0.07:
             score += 20
-        elif abs(ar1 - ar2) < 0.1:
+        elif diff_ar < 0.12:
             score += 10
-            
+
     return score
 
 def group_videos_by_bucket(videos: List[Dict]) -> Dict[Tuple[int, int], List[Dict]]:
@@ -112,31 +119,73 @@ def group_videos_by_bucket(videos: List[Dict]) -> Dict[Tuple[int, int], List[Dic
         buckets[key].append(v)
     return buckets
 
-def find_fuzzy_duplicates(videos: List[Dict], threshold: float = 75) -> List[Dict]:
-    duplicates = []
-    seen = set()
+def find_fuzzy_duplicates(videos: List[Dict], threshold: float = 85) -> List[Dict]:
+    """
+    البحث عن المكررات الضبابية مع تجميعها في مجموعات (clusters).
+    """
+    from collections import defaultdict
+
+    n = len(videos)
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i, j):
+        root_i = find(i)
+        root_j = find(j)
+        if root_i == root_j:
+            return
+        if rank[root_i] < rank[root_j]:
+            parent[root_i] = root_j
+        elif rank[root_i] > rank[root_j]:
+            parent[root_j] = root_i
+        else:
+            parent[root_j] = root_i
+            rank[root_i] += 1
+
     buckets = group_videos_by_bucket(videos)
     for bucket_videos in buckets.values():
         if len(bucket_videos) > 200:
             continue
-        for i in range(len(bucket_videos)):
-            for j in range(i + 1, len(bucket_videos)):
-                a = bucket_videos[i]
-                b = bucket_videos[j]
+        idx_list = [videos.index(v) for v in bucket_videos]
+        for i in range(len(idx_list)):
+            for j in range(i + 1, len(idx_list)):
+                idx_a = idx_list[i]
+                idx_b = idx_list[j]
+                a = videos[idx_a]
+                b = videos[idx_b]
                 if abs(a.get("duration", 0) - b.get("duration", 0)) > 5:
                     continue
-                pair = tuple(sorted((a["msg_id"], b["msg_id"])))
-                if pair in seen:
-                    continue
-                seen.add(pair)
                 score = fuzzy_video_score(a, b)
                 if score >= threshold:
-                    duplicates.append({
-                        "dup": b,
-                        "original": a,
-                        "score": score,
-                        "match_type": f"fuzzy ({score:.0f})"
-                    })
+                    union(idx_a, idx_b)
+
+    clusters = defaultdict(list)
+    for idx, v in enumerate(videos):
+        root = find(idx)
+        clusters[root].append(v)
+
+    duplicates = []
+    for cluster in clusters.values():
+        if len(cluster) < 2:
+            continue
+        cluster.sort(key=lambda x: x["date"])
+        keeper = cluster[0]
+        for dup in cluster[1:]:
+            duplicates.append({
+                "dup": dup,
+                "original": keeper,
+                "score": fuzzy_video_score(keeper, dup),
+                "match_type": "fuzzy"
+            })
+
+    for d in duplicates:
+        d["match_type"] = f"fuzzy ({d['score']:.0f})"
     return duplicates
 
 # ================== التنسيق العام ==================
@@ -435,7 +484,7 @@ async def _delete_messages(client, channel, ids):
 def get_session_string(client):
     return client.session.save()
 
-# ================== استخراج معلومات الملف (بدون بوت) ==================
+# ================== استخراج معلومات الملف (بدون fallback خاطئ) ==================
 async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash: bool) -> Optional[Dict]:
     media = msg.media
     if not media: return None
@@ -473,13 +522,8 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     else:
         return None
 
-    # إنشاء file_unique_id احتياطي (بدون بوت)
-    if info["type"] == "video" and info["size"] > 0:
-        info["file_unique_id"] = f"v:{info['size']}:{int(info['duration'])}"
-    elif info["type"] == "photo":
-        info["file_unique_id"] = f"p:{media.photo.id}"
-    else:
-        info["file_unique_id"] = f"d:{media.document.id}"
+    # نترك file_unique_id فارغاً (لا نستخدمه في المقارنات لتجنب الإيجابيات الكاذبة)
+    info["file_unique_id"] = None
 
     if compute_md5 or compute_phash:
         thumb = get_thumb(media) if compute_phash else None
@@ -571,7 +615,7 @@ class Database:
         )
         self.conn.commit()
 
-    def stream_duplicates(self, channel_id, keep_strategy, min_size=0, use_md5=False, use_phash=False, use_fuzzy=True, fuzzy_threshold=75):
+    def stream_duplicates(self, channel_id, keep_strategy, min_size=0, use_md5=False, use_phash=False, use_fuzzy=True, fuzzy_threshold=85):
         query = """
             SELECT msg_id, file_size, msg_date, file_id, file_unique_id, duration,
                    width, height, phash, file_type, mime_type, file_name, md5_hash
@@ -610,6 +654,75 @@ class Database:
 
         duplicates_map = {}
 
+        # --- طبقة file_id (موثوقة 100%) ---
+        groups_fid = {}
+        for v in videos:
+            fid = v["file_id"]
+            if fid:
+                groups_fid.setdefault(fid, []).append(v)
+        for fid, group in groups_fid.items():
+            if len(group) < 2:
+                continue
+            group.sort(key=lambda x: x["date"])
+            keeper = group[0]
+            for dup in group[1:]:
+                mid = dup["msg_id"]
+                if mid not in duplicates_map:
+                    duplicates_map[mid] = {
+                        "id": mid, "size": dup["size"], "date": dup["date"], "file_id": dup["file_id"],
+                        "file_unique_id": dup["file_unique_id"], "duration": dup["duration"],
+                        "phash": dup["phash"], "type": dup["type"], "mime": dup["mime"],
+                        "name": dup["name"], "keeper_id": keeper["msg_id"],
+                        "match_type": "file_id"
+                    }
+
+        # --- طبقة MD5 (اختيارية) ---
+        if use_md5:
+            groups_md5 = {}
+            for v in videos:
+                md5 = v["md5"]
+                if md5:
+                    groups_md5.setdefault(md5, []).append(v)
+            for md5, group in groups_md5.items():
+                if len(group) < 2:
+                    continue
+                group.sort(key=lambda x: x["date"])
+                keeper = group[0]
+                for dup in group[1:]:
+                    mid = dup["msg_id"]
+                    if mid not in duplicates_map:
+                        duplicates_map[mid] = {
+                            "id": mid, "size": dup["size"], "date": dup["date"], "file_id": dup["file_id"],
+                            "file_unique_id": dup["file_unique_id"], "duration": dup["duration"],
+                            "phash": dup["phash"], "type": dup["type"], "mime": dup["mime"],
+                            "name": dup["name"], "keeper_id": keeper["msg_id"],
+                            "match_type": "md5"
+                        }
+
+        # --- طبقة pHash (اختيارية) ---
+        if use_phash and _HAS_IMAGEHASH:
+            groups_ph = {}
+            for v in videos:
+                ph = v["phash"]
+                if ph:
+                    groups_ph.setdefault(ph, []).append(v)
+            for ph, group in groups_ph.items():
+                if len(group) < 2:
+                    continue
+                group.sort(key=lambda x: x["date"])
+                keeper = group[0]
+                for dup in group[1:]:
+                    mid = dup["msg_id"]
+                    if mid not in duplicates_map:
+                        duplicates_map[mid] = {
+                            "id": mid, "size": dup["size"], "date": dup["date"], "file_id": dup["file_id"],
+                            "file_unique_id": dup["file_unique_id"], "duration": dup["duration"],
+                            "phash": dup["phash"], "type": dup["type"], "mime": dup["mime"],
+                            "name": dup["name"], "keeper_id": keeper["msg_id"],
+                            "match_type": "phash"
+                        }
+
+        # --- طبقة Fuzzy (اختيارية) ---
         if use_fuzzy:
             fuzzy_dups = find_fuzzy_duplicates(videos, fuzzy_threshold)
             for d in fuzzy_dups:
@@ -625,39 +738,6 @@ class Database:
                         "match_type": d["match_type"]
                     }
 
-        def add_duplicates_from_group(group_func, match_type):
-            groups = {}
-            for v in videos:
-                key = group_func(v)
-                if key is None: continue
-                groups.setdefault(key, []).append(v)
-            for key, group in groups.items():
-                if len(group) < 2: continue
-                if keep_strategy == "oldest":
-                    group.sort(key=lambda x: x["date"])
-                elif keep_strategy == "newest":
-                    group.sort(key=lambda x: x["date"], reverse=True)
-                elif keep_strategy == "largest":
-                    group.sort(key=lambda x: x["size"], reverse=True)
-                keeper = group[0]
-                for dup in group[1:]:
-                    mid = dup["msg_id"]
-                    if mid not in duplicates_map:
-                        duplicates_map[mid] = {
-                            "id": mid, "size": dup["size"], "date": dup["date"],
-                            "file_id": dup["file_id"], "file_unique_id": dup["file_unique_id"],
-                            "duration": dup["duration"], "phash": dup["phash"], "type": dup["type"],
-                            "mime": dup["mime"], "name": dup["name"], "keeper_id": keeper["msg_id"],
-                            "match_type": match_type
-                        }
-
-        add_duplicates_from_group(lambda v: v["file_id"], "file_id")
-        add_duplicates_from_group(lambda v: v["file_unique_id"], "file_unique_id")
-        if use_md5:
-            add_duplicates_from_group(lambda v: v["md5"], "md5")
-        if use_phash and _HAS_IMAGEHASH:
-            add_duplicates_from_group(lambda v: v["phash"], "phash")
-
         return list(duplicates_map.values())
 
     def clear_channel(self, channel_id):
@@ -665,7 +745,8 @@ class Database:
         self.conn.execute("DELETE FROM resume_meta WHERE channel_id=?", (channel_id,))
         self.conn.commit()
 
-    def close(self): self.conn.close()
+    def close(self):
+        self.conn.close()
 
 # ================== حالة الجلسة ==================
 defaults = {
@@ -772,7 +853,7 @@ st.html("""
                  padding:3px 10px; border-radius:99px; letter-spacing:0.04em; margin-top:4px;">v4.0</span>
   </div>
   <p style="color:#64748b; font-size:0.88rem; margin:0;">
-    كشف المكررات عبر: File ID · File Unique ID · MD5 · pHash · الذكاء الضبابي (Fuzzy)
+    كشف المكررات عبر: File ID · MD5 · pHash · الذكاء الضبابي (Fuzzy)
   </p>
 </div>
 """)
@@ -915,7 +996,7 @@ elif st.session_state.step == 'channel':
 
         col_a, col_b = st.columns(2)
         with col_a:
-            st.markdown("✅ **File ID + File Unique ID** (أساسي، سريع جداً)")
+            st.markdown("✅ **File ID** (أساسي، سريع جداً)")
             compute_md5 = st.checkbox("🔐 MD5 Hash – تطابق المحتوى", value=False,
                                       help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
         with col_b:
@@ -927,8 +1008,8 @@ elif st.session_state.step == 'channel':
         st.subheader("🧠 الذكاء الضبابي (Fuzzy Detection)")
         use_fuzzy = st.checkbox("تفعيل الكشف الضبابي عن الفيديوهات المتشابهة", value=True,
                                 help="يكتشف الفيديوهات المتشابهة حتى لو اختلفت دقتها أو حجمها قليلاً. (موصى به)")
-        fuzzy_threshold = st.slider("عتبة التشابه الضبابي", 50, 95, 75, 5,
-                                    help="كلما ارتفعت العتبة زادت الدقة وقلت النتائج. 75 قيمة موصى بها.")
+        fuzzy_threshold = st.slider("عتبة التشابه الضبابي", 50, 95, 85, 5,
+                                    help="كلما ارتفعت العتبة زادت الدقة وقلت النتائج. 85 قيمة موصى بها.")
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
@@ -1099,7 +1180,7 @@ elif st.session_state.step == 'results':
         use_md5=params.get('compute_md5', False),
         use_phash=params.get('compute_phash', False),
         use_fuzzy=params.get('use_fuzzy', True),
-        fuzzy_threshold=params.get('fuzzy_threshold', 75)
+        fuzzy_threshold=params.get('fuzzy_threshold', 85)
     )
 
     st.html(f"<h3 style='margin:0 0 16px; color:#0f172a;'>📋 {getattr(channel, 'title', str(channel.id))}</h3>")
