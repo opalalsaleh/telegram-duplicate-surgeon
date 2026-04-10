@@ -3,3 +3,4 @@ telethon
 pandas
 pillow
 imagehash
+httpx
