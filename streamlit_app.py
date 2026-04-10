@@ -284,24 +284,52 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     else:
         return None
 
-    if compute_md5 or compute_phash:
-        thumb = get_thumb(media) if compute_phash else None
-        data = None
+    # ── pHash للصور: دايماً من الـ thumbnail (كيلوبايت فقط) ──
+    # الـ thumbnail أصغر بكثير من الصورة الكاملة لكن كافٍ لـ pHash
+    # نفعّله دايماً للصور بغض النظر عن إعداد compute_phash
+    is_photo = info["type"] in ("photo", "image")
+
+    if is_photo and _HAS_IMAGEHASH:
+        thumb = get_thumb(media)
+        data  = None
         try:
             if thumb:
+                # thumbnail صغير = 5-40 KB فقط
                 data = await client.download_media(thumb, file=bytes)
             else:
-                data = await client.download_media(msg, file=bytes,
-                                                   size=PHASH_SIZE_LIMIT if compute_phash else None)
+                # fallback: حمّل الصورة كاملة إذا ما في thumbnail
+                data = await client.download_media(msg, file=bytes)
+            if data:
+                with io.BytesIO(data) as bio:
+                    with Image.open(bio) as img:
+                        info["phash"] = str(imagehash.phash(img))
+        except Exception:
+            pass
+        finally:
+            del data
+            gc.collect()
+
+    # ── MD5 وpHash للفيديو والملفات (بس إذا فعّل المستخدم) ──
+    if not is_photo and (compute_md5 or compute_phash):
+        data = None
+        try:
+            data = await client.download_media(msg, file=bytes,
+                                               size=PHASH_SIZE_LIMIT if compute_phash else None)
             if compute_md5 and info["size"] <= MD5_SIZE_LIMIT and data:
                 info["md5"] = hashlib.md5(data).hexdigest()
-            if compute_phash and _HAS_IMAGEHASH and info["type"] in ("photo", "image") and data:
-                try:
-                    with io.BytesIO(data) as bio:
-                        with Image.open(bio) as img:
-                            info["phash"] = str(imagehash.phash(img))
-                except Exception:
-                    pass
+        except Exception:
+            pass
+        finally:
+            del data
+            gc.collect()
+
+    # ── MD5 للصور (بس إذا فعّل المستخدم وحجمها صغير) ──
+    if is_photo and compute_md5 and info["size"] <= MD5_SIZE_LIMIT:
+        data = None
+        try:
+            data = await client.download_media(msg, file=bytes)
+            if data:
+                info["md5"] = hashlib.md5(data).hexdigest()
         except Exception:
             pass
         finally:
