@@ -495,10 +495,6 @@ class Database:
     def stream_duplicates(self, channel_id, keep_strategy, min_size=0, use_md5=False, use_phash=False):
         order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
         duplicates = []
-        
-    def stream_duplicates(self, channel_id, keep_strategy, min_size=0, use_md5=False, use_phash=False):
-        order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
-        duplicates = []
 
         # ── Layer 1: file_id متطابق (نفس الرسالة مُعاد توجيهها forward) ──
         cursor = self.conn.execute(
@@ -656,6 +652,12 @@ with st.sidebar:
                 st.markdown(f"@{me.username}")
         except:
             pass
+
+        # زر نسخ الـ Session String لتفادي FloodWait مستقبلاً
+        if st.session_state.session_string:
+            with st.expander("🔑 Session String"):
+                st.caption("احفظها واستخدمها للدخول المباشر بدون SMS")
+                st.code(st.session_state.session_string, language=None)
     
     # معلومات القناة الحالية
     if st.session_state.channel:
@@ -730,36 +732,65 @@ st.html("""
 
 # ---------- تسجيل الدخول ----------
 if st.session_state.step == 'login':
-    with st.form("login_form"):
-        st.subheader("🔐 تسجيل الدخول إلى تيليجرام")
-        api_id   = st.text_input("API ID*", type="password")
-        api_hash = st.text_input("API Hash*", type="password")
-        phone    = st.text_input("رقم الهاتف*", placeholder="+963xxxxxxxxx")
-        if st.form_submit_button("إرسال رمز التحقق", use_container_width=True):
-            if not api_id or not api_hash or not phone:
-                st.error("جميع الحقول مطلوبة")
-            else:
-                try:
-                    client = run_sync(_make_client(api_id, api_hash))
-                    if not run_sync(_is_authorized(client)):
-                        sent = run_sync(_send_code(client, phone))
-                        st.session_state.phone_code_hash = sent.phone_code_hash
-                        st.session_state.session_string  = get_session_string(client)
-                        st.session_state.api_id   = api_id
-                        st.session_state.api_hash = api_hash
-                        st.session_state.phone    = phone
-                        st.session_state.client   = client
-                        st.session_state.step     = 'verify_code'
-                        st.rerun()
-                    else:
-                        st.session_state.session_string = get_session_string(client)
-                        st.session_state.api_id   = api_id
-                        st.session_state.api_hash = api_hash
-                        st.session_state.client   = client
-                        st.session_state.step     = 'channel'
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"خطأ: {e}")
+    tab_phone, tab_session = st.tabs(["📱 رقم الهاتف", "🔑 Session String"])
+
+    # ── تبويب رقم الهاتف ──
+    with tab_phone:
+        with st.form("login_form"):
+            st.caption("للاستخدام الأول أو عند انتهاء الجلسة")
+            api_id   = st.text_input("API ID*", type="password")
+            api_hash = st.text_input("API Hash*", type="password")
+            phone    = st.text_input("رقم الهاتف*", placeholder="+963xxxxxxxxx")
+            if st.form_submit_button("إرسال رمز التحقق", use_container_width=True, type="primary"):
+                if not api_id or not api_hash or not phone:
+                    st.error("جميع الحقول مطلوبة")
+                else:
+                    try:
+                        client = run_sync(_make_client(api_id, api_hash))
+                        if not run_sync(_is_authorized(client)):
+                            sent = run_sync(_send_code(client, phone))
+                            st.session_state.phone_code_hash = sent.phone_code_hash
+                            st.session_state.session_string  = get_session_string(client)
+                            st.session_state.api_id   = api_id
+                            st.session_state.api_hash = api_hash
+                            st.session_state.phone    = phone
+                            st.session_state.client   = client
+                            st.session_state.step     = 'verify_code'
+                            st.rerun()
+                        else:
+                            st.session_state.session_string = get_session_string(client)
+                            st.session_state.api_id   = api_id
+                            st.session_state.api_hash = api_hash
+                            st.session_state.client   = client
+                            st.session_state.step     = 'channel'
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"خطأ: {e}")
+
+    # ── تبويب Session String (بدون SMS) ──
+    with tab_session:
+        with st.form("session_form"):
+            st.caption("ادخل الـ Session String المحفوظة من جلسة سابقة — بدون حاجة لرمز SMS")
+            s_api_id   = st.text_input("API ID*", type="password", key="s_api_id")
+            s_api_hash = st.text_input("API Hash*", type="password", key="s_api_hash")
+            s_session  = st.text_area("Session String*", placeholder="1BVtsOK...", height=100, key="s_session")
+            if st.form_submit_button("دخول مباشر", use_container_width=True, type="primary"):
+                if not s_api_id or not s_api_hash or not s_session:
+                    st.error("جميع الحقول مطلوبة")
+                else:
+                    try:
+                        client = run_sync(_make_client(s_api_id, s_api_hash, s_session.strip()))
+                        if run_sync(_is_authorized(client)):
+                            st.session_state.session_string = get_session_string(client)
+                            st.session_state.api_id   = s_api_id
+                            st.session_state.api_hash = s_api_hash
+                            st.session_state.client   = client
+                            st.session_state.step     = 'channel'
+                            st.rerun()
+                        else:
+                            st.error("الجلسة منتهية أو غير صالحة، استخدم تبويب رقم الهاتف")
+                    except Exception as e:
+                        st.error(f"خطأ: {e}")
 
 # ---------- إدخال رمز OTP ----------
 elif st.session_state.step == 'verify_code':
