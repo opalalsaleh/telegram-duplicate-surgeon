@@ -7,7 +7,6 @@ import sqlite3
 import tempfile
 import time
 import threading
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -19,11 +18,6 @@ from telethon.tl.types import (
 )
 from PIL import Image
 try:
-    import httpx
-    _HAS_HTTPX = True
-except ImportError:
-    _HAS_HTTPX = False
-try:
     import imagehash
     _HAS_IMAGEHASH = True
 except ImportError:
@@ -31,108 +25,6 @@ except ImportError:
 
 # ================== تهيئة الصفحة ==================
 st.set_page_config(page_title="DupZap – مزيل المكررات", page_icon="✂️", layout="wide")
-
-# ================== Bot Token من st.secrets (للـ file_unique_id فقط) ==================
-_BOT_TOKEN: str = st.secrets.get("bot_token", "")
-
-async def _bot_get_file_unique_id(chat_id: int, message_id: int) -> Optional[str]:
-    """يستخدم Bot API لجلب file_unique_id الثابت — بدون forward."""
-    if not _BOT_TOKEN or not _HAS_HTTPX:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=15) as http:
-            r = await http.post(
-                f"https://api.telegram.org/bot{_BOT_TOKEN}/getMessages",
-                json={"chat_id": chat_id, "message_ids": [message_id]}
-            )
-            data = r.json()
-            if not data.get("ok"):
-                return None
-            messages = data.get("result", [])
-            if not messages:
-                return None
-            msg = messages[0]
-            for key in ("video", "document", "audio", "animation", "photo"):
-                media = msg.get(key)
-                if media:
-                    return (media[-1] if isinstance(media, list) else media).get("file_unique_id")
-    except Exception:
-        return None
-    return None
-
-def bot_get_file_unique_id(chat_id: int, message_id: int) -> Optional[str]:
-    future = asyncio.run_coroutine_threadsafe(
-        _bot_get_file_unique_id(chat_id, message_id),
-        st.session_state._bg_loop
-    )
-    try:
-        return future.result(timeout=20)
-    except Exception:
-        return None
-
-async def _bot_diagnose(chat_id: int, message_id: int) -> dict:
-    """تشخيص شامل للبوت — يرجع dict بكل الخطوات ونتائجها."""
-    result = {
-        "token_set": bool(_BOT_TOKEN),
-        "httpx_ok": _HAS_HTTPX,
-        "getme": None, "getme_error": None,
-        "forward": None, "forward_error": None,
-        "file_unique_id": None,
-        "delete": True,
-    }
-    if not _BOT_TOKEN:
-        result["getme_error"] = "bot_token غير موجود في st.secrets"
-        return result
-    if not _HAS_HTTPX:
-        result["getme_error"] = "مكتبة httpx غير مثبّتة"
-        return result
-    try:
-        async with httpx.AsyncClient(timeout=15) as http:
-            r = await http.get(f"https://api.telegram.org/bot{_BOT_TOKEN}/getMe")
-            me = r.json()
-            if me.get("ok"):
-                result["getme"] = f"@{me['result']['username']} — {me['result']['first_name']}"
-            else:
-                result["getme_error"] = me.get("description", "فشل getMe")
-                return result
-
-            r2 = await http.post(
-                f"https://api.telegram.org/bot{_BOT_TOKEN}/getMessages",
-                json={"chat_id": chat_id, "message_ids": [message_id]}
-            )
-            gm = r2.json()
-            if not gm.get("ok"):
-                result["forward_error"] = gm.get("description", "فشل getMessages")
-                return result
-
-            messages = gm.get("result", [])
-            if not messages:
-                result["forward_error"] = "الرسالة غير موجودة أو البوت لا يملك صلاحية القراءة"
-                return result
-
-            msg = messages[0]
-            result["forward"] = f"رسالة #{msg.get('message_id')} قُرئت بنجاح"
-
-            for key in ("video", "document", "audio", "animation", "photo"):
-                media = msg.get(key)
-                if media:
-                    fuid = (media[-1] if isinstance(media, list) else media).get("file_unique_id")
-                    result["file_unique_id"] = fuid
-                    break
-
-    except Exception as e:
-        result["getme_error"] = str(e)
-    return result
-
-def bot_diagnose(chat_id: int, message_id: int) -> dict:
-    future = asyncio.run_coroutine_threadsafe(
-        _bot_diagnose(chat_id, message_id),
-        st.session_state._bg_loop
-    )
-    try:
-        return future.result(timeout=30)
-    except Exception as e:
-        return {"error": str(e)}
 
 # ================== نظام التكرار الضبابي (Fuzzy Duplicate Detection) ==================
 def make_bucket(v: Dict) -> Tuple[int, int]:
@@ -169,9 +61,6 @@ def fuzzy_video_score(a: Dict, b: Dict) -> float:
         if abs(ar1 - ar2) < 0.05: score += 20
         elif abs(ar1 - ar2) < 0.1: score += 10
     return score
-
-def is_fuzzy_duplicate(a: Dict, b: Dict, threshold: float = 75) -> bool:
-    return fuzzy_video_score(a, b) >= threshold
 
 def group_videos_by_bucket(videos: List[Dict]) -> Dict[Tuple[int, int], List[Dict]]:
     buckets = {}
@@ -505,7 +394,7 @@ async def _delete_messages(client, channel, ids):
 def get_session_string(client):
     return client.session.save()
 
-# ================== استخراج معلومات الملف ==================
+# ================== استخراج معلومات الملف (بدون بوت) ==================
 async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash: bool) -> Optional[Dict]:
     media = msg.media
     if not media: return None
@@ -543,24 +432,13 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     else:
         return None
 
-    try:
-        peer = msg.peer_id
-        raw_id = getattr(peer, 'channel_id', None) or getattr(peer, 'chat_id', None)
-        if raw_id and _BOT_TOKEN:
-            bot_chat_id = int(f"-100{raw_id}") if hasattr(peer, 'channel_id') else -raw_id
-            fuid = bot_get_file_unique_id(bot_chat_id, msg.id)
-            if fuid:
-                info["file_unique_id"] = fuid
-    except Exception:
-        pass
-
-    if not info["file_unique_id"]:
-        if info["type"] == "video" and info["size"] > 0:
-            info["file_unique_id"] = f"v:{info['size']}:{int(info['duration'])}"
-        elif info["type"] == "photo":
-            info["file_unique_id"] = f"p:{media.photo.id}"
-        else:
-            info["file_unique_id"] = f"d:{media.document.id}"
+    # إنشاء file_unique_id احتياطي (بدون بوت)
+    if info["type"] == "video" and info["size"] > 0:
+        info["file_unique_id"] = f"v:{info['size']}:{int(info['duration'])}"
+    elif info["type"] == "photo":
+        info["file_unique_id"] = f"p:{media.photo.id}"
+    else:
+        info["file_unique_id"] = f"d:{media.document.id}"
 
     if compute_md5 or compute_phash:
         thumb = get_thumb(media) if compute_phash else None
@@ -599,15 +477,23 @@ class Database:
         self._init_tables()
 
     def _init_tables(self):
+        # إنشاء الجدول الأساسي
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_files (
                 channel_id INTEGER, msg_id INTEGER, file_id TEXT, file_unique_id TEXT,
-                file_size INTEGER, duration INTEGER, width INTEGER, height INTEGER,
+                file_size INTEGER, duration INTEGER,
                 md5_hash TEXT, phash TEXT,
                 msg_date TEXT, file_type TEXT, mime_type TEXT, views INTEGER, file_name TEXT,
                 PRIMARY KEY (channel_id, msg_id)
             ) WITHOUT ROWID
         """)
+        # إضافة أعمدة width, height بأمان (للتوافق مع الإصدارات السابقة)
+        for col in ("width", "height"):
+            try:
+                self.conn.execute(f"ALTER TABLE seen_files ADD COLUMN {col} INTEGER")
+            except sqlite3.OperationalError:
+                pass  # العمود موجود مسبقاً
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS resume_meta (
                 channel_id INTEGER PRIMARY KEY,
@@ -633,7 +519,8 @@ class Database:
         self.conn.commit()
 
     def buffer_insert(self, record):
-        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
+        # record يجب أن يحتوي على 15 قيمة
+        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
         self.conn.commit()
 
     def delete_msg_records(self, channel_id, msg_ids):
@@ -1067,40 +954,6 @@ elif st.session_state.step == 'scanning':
         if st.button("🔄 فحص من البداية", use_container_width=True, help="يمسح بيانات هذه القناة ويبدأ الفحص من أول رسالة"):
             st.session_state._confirm_rescan = True
             st.rerun()
-
-    with st.expander("🔍 تشخيص البوت"):
-        st.caption("تحقق من أن البوت يعمل بشكل صحيح ويستطيع جلب file_unique_id")
-        diag_msg_id = st.number_input("معرّف رسالة فيديو من القناة للاختبار", min_value=1, step=1, value=1, key="diag_msg_id")
-        if st.button("▶️ اختبر الآن", key="btn_diag"):
-            try:
-                peer = channel
-                raw_id = getattr(peer, 'id', None)
-                if raw_id:
-                    bot_chat_id = int(f"-100{raw_id}")
-                    with st.spinner("جارٍ الاختبار..."):
-                        diag = bot_diagnose(bot_chat_id, int(diag_msg_id))
-
-                    rows = [
-                        ("bot_token في secrets",   "✅" if diag.get("token_set")  else "❌ غير موجود"),
-                        ("مكتبة httpx",             "✅" if diag.get("httpx_ok")   else "❌ غير مثبّتة"),
-                        ("getMe (البوت نفسه)",      f"✅ {diag['getme']}" if diag.get("getme") else f"❌ {diag.get('getme_error','')}"),
-                        ("قراءة الرسالة (getMessages)", f"✅ {diag['forward']}" if diag.get("forward") else f"❌ {diag.get('forward_error','لم يُنفَّذ')}"),
-                        ("file_unique_id",          f"✅ `{diag['file_unique_id']}`" if diag.get("file_unique_id") else "❌ لم يُستخرج"),
-                    ]
-                    for label, val in rows:
-                        icon = "🟢" if val.startswith("✅") else ("🔴" if val.startswith("❌") else "🟡")
-                        st.markdown(f"{icon} **{label}:** {val}")
-
-                    if not diag.get("getme"):
-                        st.error("البوت لا يستجيب — تحقق من صحة bot_token في st.secrets")
-                    elif not diag.get("forward"):
-                        st.error("البوت لا يستطيع قراءة القناة — تأكد أنه **عضو مشرف** وصلاحية **نشر الرسائل** مفعّلة")
-                    elif not diag.get("file_unique_id"):
-                        st.warning("البوت يعمل لكن الرسالة لا تحتوي على ملف — جرّب معرّف رسالة فيديو أخرى")
-                    else:
-                        st.success("✅ البوت يعمل بشكل كامل — سيُستخدم لجلب file_unique_id الحقيقي عند المسح")
-            except Exception as e:
-                st.error(f"خطأ: {e}")
 
     if st.session_state.get('_confirm_rescan'):
         st.warning("⚠️ سيتم مسح كل بيانات هذه القناة والبدء من الصفر. هل أنت متأكد؟")
