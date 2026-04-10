@@ -795,53 +795,55 @@ elif st.session_state.step == 'channel':
                               help="يكتشف الفيديوهات المرفوعة من جديد — scoring مرجّح: المدة 60% + الحجم 40%")
 
         fuzzy_threshold = 0.74
+        strict_mode = False
         if use_fuzzy:
-            st.markdown("""
-            <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:9px;
-                        padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#0369a1;">
-            ⚙️ <b>كيف يعمل؟</b>
-            فلترة صارمة أولاً: مدة &lt; 15ث تُهمل · فرق مدة &gt; 2ث رفض · فرق حجم &gt; 15% رفض<br>
-            ثم Scoring: المدة (60%) + الحجم (40%) — threshold الافتراضي 0.74 مُختبر على 12 حالة
-            </div>
-            """, unsafe_allow_html=True)
-
-            strict_mode = st.checkbox(
-                "🔒 وضع صارم جداً — نفس الحجم ونفس المدة بالضبط فقط",
-                value=False,
-                help="يكتشف فقط الفيديوهات التي حجمها متطابق تماماً ومدتها لا تختلف أكثر من ثانية واحدة"
-            )
-
-            if strict_mode:
-                fuzzy_threshold = 0.99
-                st.html("""
-                <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;
-                            padding:8px 14px;font-size:0.83rem;color:#991b1b;">
-                🔒 <b>الوضع الصارم مفعّل</b> — يقبل فقط: فرق مدة = 0 ث وفرق حجم &lt; 2%
+            with st.expander("⚙️ إعدادات Fuzzy المتقدمة", expanded=False):
+                st.markdown("""
+                <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:9px;
+                            padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#0369a1;">
+                ⚙️ <b>كيف يعمل؟</b>
+                فلترة صارمة أولاً: مدة &lt; 15ث تُهمل · فرق مدة &gt; 2ث رفض · فرق حجم &gt; 15% رفض<br>
+                ثم Scoring: المدة (60%) + الحجم (40%) — threshold الافتراضي 0.74 مُختبر على 12 حالة
                 </div>
-                """)
-            else:
-                fuzzy_threshold = st.slider(
-                    "الحد الأدنى للـ Score",
-                    min_value=0.60, max_value=0.98, value=0.74, step=0.01, format="%.2f",
-                    help="0.74 موصى به · ارفعه لتقليل false positives · اخفضه لكشف أكثر"
+                """, unsafe_allow_html=True)
+
+                strict_mode = st.checkbox(
+                    "🔒 وضع صارم جداً — نفس الحجم ونفس المدة بالضبط فقط",
+                    value=False,
+                    help="يكتشف فقط الفيديوهات التي حجمها متطابق تماماً ومدتها لا تختلف أكثر من ثانية واحدة"
                 )
-                col_t1, col_t2, col_t3 = st.columns(3)
-                with col_t1:
-                    st.html("""<div style="background:#f0fdf4;border-radius:8px;padding:8px;
-                                text-align:center;font-size:0.79rem;">
-                    <b>dur_score (60%)</b><br>0ث فرق → 1.00<br>1ث فرق → 0.85<br>2ث فرق → 0.70</div>""")
-                with col_t2:
-                    st.html("""<div style="background:#f1f5f9;border-radius:8px;padding:8px;
-                               text-align:center;font-size:0.79rem;">
-                    <b>size_score (40%)</b><br>0% فرق → 1.00<br>7.5% فرق → 0.70<br>15% فرق → 0.40</div>""")
-                with col_t3:
-                    verdict = ("🟢 صارم" if fuzzy_threshold >= 0.85
-                               else "🟡 متوازن" if fuzzy_threshold >= 0.74
-                               else "🔴 متساهل")
-                    st.html(f"""<div style="background:#f8fafc;border-radius:8px;padding:8px;
-                                text-align:center;font-size:0.79rem;">
-                    <b>الحد الحالي</b><br>{fuzzy_threshold:.2f}<br>{verdict}</div>""")
-                st.caption("مثال: مدة 1ث + حجم 7% → score=0.80 ✅ مكرر عند 0.74")
+
+                if strict_mode:
+                    fuzzy_threshold = 0.99
+                    st.html("""
+                    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;
+                                padding:8px 14px;font-size:0.83rem;color:#991b1b;">
+                    🔒 <b>الوضع الصارم مفعّل</b> — يقبل فقط: فرق مدة = 0 ث وفرق حجم &lt; 2%
+                    </div>
+                    """)
+                else:
+                    fuzzy_threshold = st.slider(
+                        "الحد الأدنى للـ Score",
+                        min_value=0.60, max_value=0.98, value=0.74, step=0.01, format="%.2f",
+                        help="0.74 موصى به · ارفعه لتقليل false positives · اخفضه لكشف أكثر"
+                    )
+                    col_t1, col_t2, col_t3 = st.columns(3)
+                    with col_t1:
+                        st.html("""<div style="background:#f0fdf4;border-radius:8px;padding:8px;
+                                    text-align:center;font-size:0.79rem;">
+                        <b>dur_score (60%)</b><br>0ث فرق → 1.00<br>1ث فرق → 0.85<br>2ث فرق → 0.70</div>""")
+                    with col_t2:
+                        st.html("""<div style="background:#f1f5f9;border-radius:8px;padding:8px;
+                                   text-align:center;font-size:0.79rem;">
+                        <b>size_score (40%)</b><br>0% فرق → 1.00<br>7.5% فرق → 0.70<br>15% فرق → 0.40</div>""")
+                    with col_t3:
+                        verdict = ("🟢 صارم" if fuzzy_threshold >= 0.85
+                                   else "🟡 متوازن" if fuzzy_threshold >= 0.74
+                                   else "🔴 متساهل")
+                        st.html(f"""<div style="background:#f8fafc;border-radius:8px;padding:8px;
+                                    text-align:center;font-size:0.79rem;">
+                        <b>الحد الحالي</b><br>{fuzzy_threshold:.2f}<br>{verdict}</div>""")
+                    st.caption("مثال: مدة 1ث + حجم 7% → score=0.80 ✅ مكرر عند 0.74")
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
