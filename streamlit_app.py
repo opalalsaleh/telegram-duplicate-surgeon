@@ -55,7 +55,8 @@ def fuzzy_video_score(a: Dict, b: Dict) -> float:
 
     w1, h1 = a.get("width", 0), a.get("height", 0)
     w2, h2 = b.get("width", 0), b.get("height", 0)
-    if w1 and h1 and w2 and h2:
+    # ✅ إصلاح: التأكد من أن الأبعاد موجبة (غير صفرية) قبل القسمة
+    if w1 > 0 and h1 > 0 and w2 > 0 and h2 > 0:
         ar1 = max(w1, h1) / min(w1, h1)
         ar2 = max(w2, h2) / min(w2, h2)
         if abs(ar1 - ar2) < 0.05: score += 20
