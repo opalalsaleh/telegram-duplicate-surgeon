@@ -774,20 +774,16 @@ elif st.session_state.step == 'channel':
         use_fuzzy = st.toggle("تفعيل Fuzzy Video Matching", value=False,
                               help="يكتشف الفيديوهات المرفوعة من جديد — scoring مرجّح: المدة 60% + الحجم 40%")
 
-        fuzzy_threshold = 0.85
-        # ✅ الـ slider دايماً موجود داخل الـ form — بس يظهر لما يكون use_fuzzy مفعّل
-        # السبب: الـ if داخل form + rerun بيسبب اختفاء القيمة
         fuzzy_threshold = st.slider(
-            "الحد الأدنى للـ Score",
+            "الحد الأدنى للـ Score (فعّال فقط مع Fuzzy)",
             min_value=0.70, max_value=0.99, value=0.85, step=0.01, format="%.2f",
             help="0.85 موصى به · ارفعه لتقليل false positives · اخفضه لكشف أكثر",
-            disabled=not use_fuzzy,
         )
         if use_fuzzy:
             verdict = ("🟢 صارم جداً" if fuzzy_threshold >= 0.90
                        else "🟡 متوازن" if fuzzy_threshold >= 0.80
                        else "🔴 متساهل")
-            st.caption(f"فرق المدة > 3 ثوان = رفض فوري · المدة 60% + الحجم 40% · الحد الحالي: {fuzzy_threshold:.2f} {verdict}")
+            st.caption(f"فرق المدة > 3 ثوان = رفض فوري · المدة 60% + الحجم 40% · {fuzzy_threshold:.2f} {verdict}")
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
