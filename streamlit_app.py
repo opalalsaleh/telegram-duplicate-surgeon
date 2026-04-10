@@ -622,7 +622,7 @@ defaults = {
     'session_string': None, 'api_id': None, 'api_hash': None, 'phone': None,
     'last_deleted_count': 0, 'last_deleted_failed': 0,
     'auto_scan_running': False, 'scan_speed': 0.0,
-    'me': None,  # معلومات المستخدم
+    'me': None, '_confirm_rescan': False,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -929,7 +929,7 @@ elif st.session_state.step == 'scanning':
 
     should_scan = st.session_state.auto_scan_running
 
-    col_btn1, col_btn2, col_btn3 = st.columns(3)
+    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
     with col_btn1:
         if not st.session_state.auto_scan_running:
             if st.button("▶️ فحص الدفعة التالية", type="primary", use_container_width=True):
@@ -947,6 +947,33 @@ elif st.session_state.step == 'scanning':
     with col_btn3:
         with open(st.session_state.db_path, "rb") as f:
             st.download_button("📥 تحميل DB", f, file_name=f"scan_{channel.id}.db", use_container_width=True)
+
+    with col_btn4:
+        if st.button("🔄 فحص من البداية", use_container_width=True, help="يمسح بيانات هذه القناة ويبدأ الفحص من أول رسالة"):
+            st.session_state._confirm_rescan = True
+            st.rerun()
+
+    # تأكيد إعادة الفحص
+    if st.session_state.get('_confirm_rescan'):
+        st.warning("⚠️ سيتم مسح كل بيانات هذه القناة والبدء من الصفر. هل أنت متأكد؟")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ نعم، ابدأ من الصفر", type="primary", use_container_width=True):
+                db_reset = Database(st.session_state.db_path)
+                db_reset.clear_channel(channel.id)
+                db_reset.close()
+                st.session_state.total_scanned    = 0
+                st.session_state.files_saved      = 0
+                st.session_state.scan_speed       = 0.0
+                st.session_state.selected_ids     = set()
+                st.session_state.auto_scan_running = False
+                st.session_state._confirm_rescan  = False
+                st.success("✅ تم مسح البيانات — الفحص سيبدأ من أول رسالة")
+                st.rerun()
+        with c2:
+            if st.button("❌ إلغاء", use_container_width=True):
+                st.session_state._confirm_rescan = False
+                st.rerun()
 
     if should_scan:
         db = Database(st.session_state.db_path)
