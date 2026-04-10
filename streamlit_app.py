@@ -762,31 +762,6 @@ elif st.session_state.step == 'channel':
     with st.form("channel_form"):
         channel_input = st.text_input("رابط القناة / المجموعة*", placeholder="@username أو https://t.me/+xxx")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            media_types   = st.multiselect("أنواع الملفات", ["photo", "video", "document"],
-                                           default=["photo", "video"])
-            keep_strategy = st.selectbox("استراتيجية الاحتفاظ",
-                                         ["oldest (الأقدم)", "newest (الأحدث)", "largest (الأكبر)"])
-            keep_map = {"oldest (الأقدم)": "oldest", "newest (الأحدث)": "newest", "largest (الأكبر)": "largest"}
-        with col2:
-            min_size_mb = st.number_input("الحد الأدنى للحجم (MB)", 0.0, 10000.0, 0.0, step=1.0)
-            auto_mode   = st.toggle("الوضع الآلي", False, help="يفحص القناة كاملاً دفعة بعد دفعة بشكل تلقائي")
-
-        st.markdown("---")
-        st.subheader("🔬 طبقات اكتشاف التكرار")
-        st.caption("Layer 1 (File ID) دائماً مفعّل — فعّل طبقات إضافية حسب الحاجة")
-
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown("✅ **File ID** — تطابق مباشر (Forward)")
-            compute_md5 = st.checkbox("🔐 MD5 — تطابق المحتوى البايتي",
-                                      help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
-        with col_b:
-            compute_phash = st.checkbox("🖼️ pHash — تشابه بصري للصور",
-                                        value=_HAS_IMAGEHASH, disabled=not _HAS_IMAGEHASH,
-                                        help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
-
         st.markdown("---")
         st.subheader("🎬 Fuzzy Video Matching")
         st.caption("يكتشف الفيديوهات المكررة حتى لو أُعيد رفعها — بناءً على المدة والحجم")
@@ -844,6 +819,32 @@ elif st.session_state.step == 'channel':
                                     text-align:center;font-size:0.79rem;">
                         <b>الحد الحالي</b><br>{fuzzy_threshold:.2f}<br>{verdict}</div>""")
                     st.caption("مثال: مدة 1ث + حجم 7% → score=0.80 ✅ مكرر عند 0.74")
+
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        with col1:
+            media_types   = st.multiselect("أنواع الملفات", ["photo", "video", "document"],
+                                           default=["photo", "video"])
+            keep_strategy = st.selectbox("استراتيجية الاحتفاظ",
+                                         ["oldest (الأقدم)", "newest (الأحدث)", "largest (الأكبر)"])
+            keep_map = {"oldest (الأقدم)": "oldest", "newest (الأحدث)": "newest", "largest (الأكبر)": "largest"}
+        with col2:
+            min_size_mb = st.number_input("الحد الأدنى للحجم (MB)", 0.0, 10000.0, 0.0, step=1.0)
+            auto_mode   = st.toggle("الوضع الآلي", False, help="يفحص القناة كاملاً دفعة بعد دفعة بشكل تلقائي")
+
+        st.markdown("---")
+        st.subheader("🔬 طبقات اكتشاف التكرار")
+        st.caption("Layer 1 (File ID) دائماً مفعّل — فعّل طبقات إضافية حسب الحاجة")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("✅ **File ID** — تطابق مباشر (Forward)")
+            compute_md5 = st.checkbox("🔐 MD5 — تطابق المحتوى البايتي",
+                                      help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
+        with col_b:
+            compute_phash = st.checkbox("🖼️ pHash — تشابه بصري للصور",
+                                        value=_HAS_IMAGEHASH, disabled=not _HAS_IMAGEHASH,
+                                        help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
