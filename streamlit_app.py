@@ -284,52 +284,24 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
     else:
         return None
 
-    # ── pHash للصور: دايماً من الـ thumbnail (كيلوبايت فقط) ──
-    # الـ thumbnail أصغر بكثير من الصورة الكاملة لكن كافٍ لـ pHash
-    # نفعّله دايماً للصور بغض النظر عن إعداد compute_phash
-    is_photo = info["type"] in ("photo", "image")
-
-    if is_photo and _HAS_IMAGEHASH:
-        thumb = get_thumb(media)
-        data  = None
+    if compute_md5 or compute_phash:
+        thumb = get_thumb(media) if compute_phash else None
+        data = None
         try:
             if thumb:
-                # thumbnail صغير = 5-40 KB فقط
                 data = await client.download_media(thumb, file=bytes)
             else:
-                # fallback: حمّل الصورة كاملة إذا ما في thumbnail
-                data = await client.download_media(msg, file=bytes)
-            if data:
-                with io.BytesIO(data) as bio:
-                    with Image.open(bio) as img:
-                        info["phash"] = str(imagehash.phash(img))
-        except Exception:
-            pass
-        finally:
-            del data
-            gc.collect()
-
-    # ── MD5 وpHash للفيديو والملفات (بس إذا فعّل المستخدم) ──
-    if not is_photo and (compute_md5 or compute_phash):
-        data = None
-        try:
-            data = await client.download_media(msg, file=bytes,
-                                               size=PHASH_SIZE_LIMIT if compute_phash else None)
+                data = await client.download_media(msg, file=bytes,
+                                                   size=PHASH_SIZE_LIMIT if compute_phash else None)
             if compute_md5 and info["size"] <= MD5_SIZE_LIMIT and data:
                 info["md5"] = hashlib.md5(data).hexdigest()
-        except Exception:
-            pass
-        finally:
-            del data
-            gc.collect()
-
-    # ── MD5 للصور (بس إذا فعّل المستخدم وحجمها صغير) ──
-    if is_photo and compute_md5 and info["size"] <= MD5_SIZE_LIMIT:
-        data = None
-        try:
-            data = await client.download_media(msg, file=bytes)
-            if data:
-                info["md5"] = hashlib.md5(data).hexdigest()
+            if compute_phash and _HAS_IMAGEHASH and info["type"] in ("photo", "image") and data:
+                try:
+                    with io.BytesIO(data) as bio:
+                        with Image.open(bio) as img:
+                            info["phash"] = str(imagehash.phash(img))
+                except Exception:
+                    pass
         except Exception:
             pass
         finally:
@@ -1061,6 +1033,60 @@ elif st.session_state.step == 'results':
         )
         for sid in edited[edited["تحديد"] == True]["معرف"].tolist():
             st.session_state.selected_ids.add(sid)
+
+        # ── مقارنة الـ Fuzzy (بدون تحميل — روابط فقط) ──
+        fuzzy_dups = [d for d in page_dups if d.get('match_type') == 'fuzzy']
+        if fuzzy_dups:
+            # channel_id للرابط: القناة العامة = @username، الخاصة = -100xxxxxxx
+            raw_id = getattr(channel, 'id', None)
+            ch_username = getattr(channel, 'username', None)
+
+            def tg_link(msg_id):
+                if ch_username:
+                    return f"https://t.me/{ch_username}/{msg_id}"
+                return f"https://t.me/c/{raw_id}/{msg_id}"
+
+            with st.expander(f"🔍 مقارنة الـ Fuzzy ({len(fuzzy_dups)} فيديو) — اضغط للمراجعة قبل الحذف"):
+                st.caption("الروابط تفتح الفيديو مباشرة في تيليجرام — لا يوجد تحميل")
+                for d in fuzzy_dups:
+                    # جلب بيانات الـ keeper من DB بدون تحميل
+                    keeper_row = db.conn.execute(
+                        "SELECT msg_id, file_size, duration, msg_date FROM seen_files "
+                        "WHERE channel_id=? AND msg_id=?",
+                        (channel.id, d['keeper_id'])
+                    ).fetchone()
+
+                    st.markdown("---")
+                    c1, c2 = st.columns(2)
+
+                    with c1:
+                        st.markdown("**✅ الأصل (يُحتفظ به)**")
+                        if keeper_row:
+                            st.markdown(f"""
+| | |
+|---|---|
+| المعرف | `{keeper_row[0]}` |
+| الحجم | {fmt_size(keeper_row[1])} |
+| المدة | {keeper_row[2]} ث |
+| التاريخ | {keeper_row[3][:10]} |
+""")
+                        st.link_button("▶️ فتح في تيليجرام",
+                                      tg_link(d['keeper_id']),
+                                      use_container_width=True)
+
+                    with c2:
+                        st.markdown("**🗑️ المكرر (سيُحذف)**")
+                        st.markdown(f"""
+| | |
+|---|---|
+| المعرف | `{d['id']}` |
+| الحجم | {fmt_size(d['size'])} |
+| المدة | {d['duration']} ث |
+| التاريخ | {d['date'][:10]} |
+""")
+                        st.link_button("▶️ فتح في تيليجرام",
+                                      tg_link(d['id']),
+                                      use_container_width=True)
 
         if total_pages > 1:
             pcol1, pcol2, pcol3 = st.columns(3)
