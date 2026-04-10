@@ -775,39 +775,19 @@ elif st.session_state.step == 'channel':
                               help="يكتشف الفيديوهات المرفوعة من جديد — scoring مرجّح: المدة 60% + الحجم 40%")
 
         fuzzy_threshold = 0.85
+        # ✅ الـ slider دايماً موجود داخل الـ form — بس يظهر لما يكون use_fuzzy مفعّل
+        # السبب: الـ if داخل form + rerun بيسبب اختفاء القيمة
+        fuzzy_threshold = st.slider(
+            "الحد الأدنى للـ Score",
+            min_value=0.70, max_value=0.99, value=0.85, step=0.01, format="%.2f",
+            help="0.85 موصى به · ارفعه لتقليل false positives · اخفضه لكشف أكثر",
+            disabled=not use_fuzzy,
+        )
         if use_fuzzy:
-            st.markdown("""
-            <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:9px;
-                        padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#0369a1;">
-            ⚙️ <b>كيف يعمل؟</b> يعطي كل زوج فيديوهات score من 0→1 &nbsp;|&nbsp;
-            المدة (60%) + الحجم (40%)<br>
-            فرق المدة &gt; 3 ثوان = رفض فوري · score ≥ الحد = مكرر
-            </div>
-            """, unsafe_allow_html=True)
-
-            fuzzy_threshold = st.slider(
-                "الحد الأدنى للـ Score (دقة الكشف)",
-                min_value=0.70, max_value=0.99, value=0.85, step=0.01, format="%.2f",
-                help="0.85 موصى به · ارفعه لتقليل false positives · اخفضه لكشف أكثر"
-            )
-            col_t1, col_t2, col_t3 = st.columns(3)
-            with col_t1:
-                bg = "#dcfce7" if fuzzy_threshold >= 0.85 else "#fef9c3"
-                st.html(f"""<div style="background:{bg};border-radius:8px;padding:8px;
-                            text-align:center;font-size:0.79rem;">
-                <b>المدة → score</b><br>تطابق تام → 0.60<br>فرق 1ث → 0.42<br>فرق 2-3ث → 0.18</div>""")
-            with col_t2:
-                st.html("""<div style="background:#f1f5f9;border-radius:8px;padding:8px;
-                           text-align:center;font-size:0.79rem;">
-                <b>الحجم → score</b><br>&lt;2% فرق → 0.40<br>&lt;8% فرق → 0.28<br>&lt;20% فرق → 0.16</div>""")
-            with col_t3:
-                verdict = ("🟢 صارم جداً" if fuzzy_threshold >= 0.90
-                           else "🟡 متوازن" if fuzzy_threshold >= 0.80
-                           else "🔴 متساهل")
-                st.html(f"""<div style="background:#f8fafc;border-radius:8px;padding:8px;
-                            text-align:center;font-size:0.79rem;">
-                <b>الحد الحالي</b><br>{fuzzy_threshold:.2f}<br>{verdict}</div>""")
-            st.caption("مثال: فيديو مدته 120ث وحجمه يختلف 25% → score=0.60 → لا يُعتبر مكرراً عند 0.85")
+            verdict = ("🟢 صارم جداً" if fuzzy_threshold >= 0.90
+                       else "🟡 متوازن" if fuzzy_threshold >= 0.80
+                       else "🔴 متساهل")
+            st.caption(f"فرق المدة > 3 ثوان = رفض فوري · المدة 60% + الحجم 40% · الحد الحالي: {fuzzy_threshold:.2f} {verdict}")
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
