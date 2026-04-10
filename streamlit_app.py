@@ -39,28 +39,41 @@ def fuzzy_video_score(a: Dict, b: Dict) -> float:
     score = 0.0
     d1, d2 = a.get("duration", 0), b.get("duration", 0)
     diff = abs(d1 - d2)
-    if diff == 0: score += 50
-    elif diff <= 1: score += 40
-    elif diff <= 2: score += 30
-    elif diff <= 3: score += 15
-    elif diff <= 5: score += 5
-    else: return 0
+    if diff == 0:
+        score += 50
+    elif diff <= 1:
+        score += 40
+    elif diff <= 2:
+        score += 30
+    elif diff <= 3:
+        score += 15
+    elif diff <= 5:
+        score += 5
+    else:
+        return 0
 
     s1, s2 = a.get("size", 0), b.get("size", 0)
     if s1 > 0 and s2 > 0:
         ratio = abs(s1 - s2) / max(s1, s2)
-        if ratio < 0.05: score += 30
-        elif ratio < 0.12: score += 20
-        elif ratio < 0.25: score += 10
+        if ratio < 0.05:
+            score += 30
+        elif ratio < 0.12:
+            score += 20
+        elif ratio < 0.25:
+            score += 10
 
-    w1, h1 = a.get("width", 0), a.get("height", 0)
-    w2, h2 = b.get("width", 0), b.get("height", 0)
-    # ✅ إصلاح: التأكد من أن الأبعاد موجبة (غير صفرية) قبل القسمة
+    w1 = a.get("width", 0)
+    h1 = a.get("height", 0)
+    w2 = b.get("width", 0)
+    h2 = b.get("height", 0)
+    # التأكد من أن الأبعاد موجبة (غير صفرية) قبل القسمة
     if w1 > 0 and h1 > 0 and w2 > 0 and h2 > 0:
         ar1 = max(w1, h1) / min(w1, h1)
         ar2 = max(w2, h2) / min(w2, h2)
-        if abs(ar1 - ar2) < 0.05: score += 20
-        elif abs(ar1 - ar2) < 0.1: score += 10
+        if abs(ar1 - ar2) < 0.05:
+            score += 20
+        elif abs(ar1 - ar2) < 0.1:
+            score += 10
     return score
 
 def group_videos_by_bucket(videos: List[Dict]) -> Dict[Tuple[int, int], List[Dict]]:
