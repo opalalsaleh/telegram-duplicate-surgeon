@@ -35,9 +35,18 @@ def make_bucket(v: Dict) -> Tuple[int, int]:
     )
 
 def fuzzy_video_score(a: Dict, b: Dict) -> float:
-    """حساب درجة التشابه بين فيديوهين (0-100) - نسخة خفيفة."""
+    """حساب درجة التشابه بين فيديوهين (0-100) - نسخة آمنة تماماً من الأخطاء."""
     score = 0.0
-    d1, d2 = a.get("duration", 0), b.get("duration", 0)
+    
+    # --- المدة ---
+    d1 = a.get("duration", 0) or 0
+    d2 = b.get("duration", 0) or 0
+    try:
+        d1 = int(d1)
+        d2 = int(d2)
+    except (ValueError, TypeError):
+        d1 = d2 = 0
+        
     diff = abs(d1 - d2)
     if diff == 0:
         score += 50
@@ -52,7 +61,15 @@ def fuzzy_video_score(a: Dict, b: Dict) -> float:
     else:
         return 0
 
-    s1, s2 = a.get("size", 0), b.get("size", 0)
+    # --- الحجم ---
+    s1 = a.get("size", 0) or 0
+    s2 = b.get("size", 0) or 0
+    try:
+        s1 = int(s1)
+        s2 = int(s2)
+    except (ValueError, TypeError):
+        s1 = s2 = 0
+        
     if s1 > 0 and s2 > 0:
         ratio = abs(s1 - s2) / max(s1, s2)
         if ratio < 0.05:
@@ -62,11 +79,20 @@ def fuzzy_video_score(a: Dict, b: Dict) -> float:
         elif ratio < 0.25:
             score += 10
 
-    w1 = a.get("width", 0)
-    h1 = a.get("height", 0)
-    w2 = b.get("width", 0)
-    h2 = b.get("height", 0)
-    # التأكد من أن الأبعاد موجبة (غير صفرية) قبل القسمة
+    # --- نسبة الأبعاد (مع حماية كاملة) ---
+    w1 = a.get("width")
+    h1 = a.get("height")
+    w2 = b.get("width")
+    h2 = b.get("height")
+    
+    try:
+        w1 = int(w1) if w1 is not None else 0
+        h1 = int(h1) if h1 is not None else 0
+        w2 = int(w2) if w2 is not None else 0
+        h2 = int(h2) if h2 is not None else 0
+    except (ValueError, TypeError):
+        w1 = h1 = w2 = h2 = 0
+
     if w1 > 0 and h1 > 0 and w2 > 0 and h2 > 0:
         ar1 = max(w1, h1) / min(w1, h1)
         ar2 = max(w2, h2) / min(w2, h2)
@@ -74,6 +100,7 @@ def fuzzy_video_score(a: Dict, b: Dict) -> float:
             score += 20
         elif abs(ar1 - ar2) < 0.1:
             score += 10
+            
     return score
 
 def group_videos_by_bucket(videos: List[Dict]) -> Dict[Tuple[int, int], List[Dict]]:
