@@ -1,1103 +1,1579 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TeleSweep – مزيل المكررات</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+import streamlit as st
+import asyncio
+import gc
+import hashlib
+import io
+import sqlite3
+import tempfile
+import time
+import threading
+from typing import Dict, List, Optional
+
+import pandas as pd
+from telethon import TelegramClient
+from telethon.sessions import StringSession
+from telethon.errors import FloodWaitError, SessionPasswordNeededError
+from telethon.tl.types import (
+    MessageMediaDocument, MessageMediaPhoto, DocumentAttributeVideo, PhotoSize
+)
+from PIL import Image
+try:
+    import imagehash
+    _HAS_IMAGEHASH = True
+except ImportError:
+    _HAS_IMAGEHASH = False
+
+# ================== تهيئة الصفحة ==================
+st.set_page_config(page_title="TeleSweep – مزيل المكررات", page_icon="🧹", layout="wide")
+
+st.html("""
 <style>
-:root {
-  --bg: #0c0b14;
-  --bg2: #13111f;
-  --bg3: #1a1829;
-  --bg4: #201e32;
-  --accent: #6366f1;
-  --accent2: #818cf8;
-  --accent3: #c084fc;
-  --border: rgba(99,102,241,0.15);
-  --border2: rgba(99,102,241,0.3);
-  --text: #e2e0f0;
-  --text2: #8b87b8;
-  --text3: #4d4a6b;
-  --success: #34d399;
-  --warning: #fbbf24;
-  --danger: #f87171;
-  --mono: 'JetBrains Mono', monospace;
-  --sans: 'IBM Plex Sans Arabic', sans-serif;
-  --r: 12px;
-  --r2: 16px;
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
+
+/* ═══════════════════════════════════════════
+   BASE
+═══════════════════════════════════════════ */
+html, body, [class*="css"], .stApp {
+    font-family: 'IBM Plex Sans Arabic', 'Segoe UI', system-ui, sans-serif;
+}
+.stApp { background: #f1f5f9; }
+.main .block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 1020px !important;
 }
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-html, body {
-  height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.6;
+/* ═══════════════════════════════════════════
+   SIDEBAR
+═══════════════════════════════════════════ */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1e1b4b 0%, #312e81 100%) !important;
+    border-right: 1px solid #3730a3;
+}
+[data-testid="stSidebar"] > div:first-child { padding: 0; }
+[data-testid="stSidebar"] * { color: #c7d2fe !important; }
+[data-testid="stSidebar"] hr {
+    border-color: #3730a3 !important;
+    margin: 0.6rem 0 !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    color: #a5b4fc !important;
+    border-radius: 10px;
+    font-weight: 500;
+    font-size: 0.84rem;
+    transition: all 0.15s;
+    backdrop-filter: blur(4px);
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(255,255,255,0.14) !important;
+    border-color: rgba(165,180,252,0.5) !important;
+    color: #e0e7ff !important;
+    transform: none;
+    box-shadow: none;
 }
 
-/* ─── LAYOUT ─────────────────────────────── */
-.app { display: flex; height: 100vh; overflow: hidden; }
-
-/* ─── SIDEBAR ─────────────────────────────── */
-.sidebar {
-  width: 220px;
-  flex-shrink: 0;
-  background: var(--bg2);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  transition: width 0.3s;
+/* Sidebar Logo */
+.sidebar-logo {
+    text-align: center;
+    padding: 26px 16px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 6px;
+}
+.sidebar-logo .logo-icon {
+    font-size: 2.4rem; line-height: 1;
+    display: block; margin-bottom: 10px;
+    filter: drop-shadow(0 0 12px rgba(129,140,248,0.6));
+}
+.sidebar-logo .logo-name {
+    font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em;
+    background: linear-gradient(90deg, #a5b4fc 0%, #818cf8 50%, #c084fc 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    display: block; margin-bottom: 2px;
+}
+.sidebar-logo .logo-ver {
+    font-size: 0.70rem; color: #6366f1 !important;
+    letter-spacing: 0.08em; text-transform: uppercase;
 }
 
-.logo {
-  padding: 24px 20px 20px;
-  border-bottom: 1px solid var(--border);
-}
-.logo-icon {
-  width: 38px; height: 38px;
-  background: linear-gradient(135deg, var(--accent), var(--accent3));
-  border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px; margin-bottom: 12px;
-}
-.logo-name { font-size: 17px; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
-.logo-ver { font-size: 10px; color: var(--text3); font-family: var(--mono); margin-top: 1px; }
-
-.nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; }
-
-.nav-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 9px 12px; border-radius: var(--r);
-  color: var(--text2); cursor: pointer;
-  transition: all 0.15s; font-size: 13px;
-  border: 1px solid transparent;
-  user-select: none;
-}
-.nav-item:hover { color: var(--text); background: var(--bg3); }
-.nav-item.active {
-  color: var(--accent2);
-  background: rgba(99,102,241,0.1);
-  border-color: var(--border);
-}
-.nav-item .icon { font-size: 15px; flex-shrink: 0; }
-
-.sidebar-footer {
-  padding: 16px;
-  border-top: 1px solid var(--border);
+/* Sidebar nav label */
+.nav-label {
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #6366f1 !important;
+    padding: 0 16px; margin: 8px 0 4px;
 }
 
-.user-chip {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px;
-  background: var(--bg3);
-  border-radius: var(--r);
-  border: 1px solid var(--border);
+/* ═══════════════════════════════════════════
+   MAIN HEADER
+═══════════════════════════════════════════ */
+.ts-header {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    border-radius: 18px;
+    padding: 24px 28px;
+    margin-bottom: 24px;
+    box-shadow: 0 8px 32px rgba(79,70,229,0.25);
+    display: flex; align-items: center; gap: 16px;
 }
-.avatar {
-  width: 30px; height: 30px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), var(--accent3));
-  display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 600; color: #fff; flex-shrink: 0;
+.ts-header-icon { font-size: 2.4rem; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.2)); }
+.ts-header-title {
+    font-size: 1.8rem; font-weight: 700; color: #ffffff !important;
+    letter-spacing: -0.02em; margin: 0; line-height: 1.2;
 }
-.user-info { flex: 1; min-width: 0; }
-.user-name { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.user-sub { font-size: 10px; color: var(--text3); }
-
-.logout-btn {
-  width: 100%; margin-top: 8px;
-  padding: 8px; border-radius: var(--r);
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text2); cursor: pointer; font-family: var(--sans);
-  font-size: 12px; transition: all 0.15s;
-}
-.logout-btn:hover { border-color: var(--danger); color: var(--danger); }
-
-/* ─── MAIN ─────────────────────────────── */
-.main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+.ts-header-sub { font-size: 0.82rem; color: rgba(255,255,255,0.7); margin: 4px 0 0; }
+.ts-badge {
+    background: rgba(255,255,255,0.15); color: #e0e7ff !important;
+    font-size: 0.68rem; font-weight: 700; padding: 3px 10px;
+    border-radius: 99px; letter-spacing: 0.08em;
+    border: 1px solid rgba(255,255,255,0.2);
+    white-space: nowrap;
 }
 
-.topbar {
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: space-between;
-  background: var(--bg2);
-  flex-shrink: 0;
+/* ═══════════════════════════════════════════
+   METRIC CARDS
+═══════════════════════════════════════════ */
+[data-testid="metric-container"] {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 20px 18px !important;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
 }
-.topbar-title { font-size: 15px; font-weight: 600; color: var(--text); }
-.topbar-sub { font-size: 12px; color: var(--text2); margin-top: 1px; }
+[data-testid="metric-container"]::before {
+    content: '';
+    position: absolute; top: 0; left: 0;
+    width: 4px; height: 100%;
+    background: linear-gradient(180deg, #6366f1, #818cf8);
+    border-radius: 0;
+}
+[data-testid="metric-container"]:hover {
+    box-shadow: 0 8px 24px rgba(99,102,241,0.12);
+    transform: translateY(-2px);
+    border-color: #c7d2fe;
+}
+[data-testid="stMetricLabel"] { color: #64748b !important; font-size: 0.80rem !important; font-weight: 500 !important; }
+[data-testid="stMetricValue"] { color: #1e1b4b !important; font-weight: 700 !important; }
 
-.status-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 8px var(--success);
-  animation: pulse 2s infinite;
+/* ═══════════════════════════════════════════
+   BUTTONS
+═══════════════════════════════════════════ */
+.stButton > button {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    font-size: 0.87rem !important;
+    min-height: 42px !important;
+    transition: all 0.18s cubic-bezier(.4,0,.2,1) !important;
+    border: 1.5px solid #e2e8f0 !important;
+    background: #ffffff !important;
+    color: #374151 !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
 }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-
-.content { flex: 1; overflow-y: auto; padding: 24px; }
-.content::-webkit-scrollbar { width: 4px; }
-.content::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; }
-
-/* ─── SCREENS ─────────────────────────────── */
-.screen { display: none; animation: fadein 0.2s ease; }
-.screen.active { display: block; }
-@keyframes fadein { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
-
-/* ─── CARDS ─────────────────────────────── */
-.card {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--r2);
-  padding: 20px;
-  margin-bottom: 16px;
+.stButton > button:hover {
+    border-color: #c7d2fe !important;
+    box-shadow: 0 4px 14px rgba(99,102,241,0.15) !important;
+    transform: translateY(-1px) !important;
+    color: #1e1b4b !important;
 }
-.card-title {
-  font-size: 13px; font-weight: 600; color: var(--text2);
-  letter-spacing: 0.05em; text-transform: uppercase;
-  margin-bottom: 14px;
+.stButton > button:active { transform: translateY(0) !important; }
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 4px 14px rgba(79,70,229,0.35) !important;
 }
-
-/* ─── FORM ELEMENTS ─────────────────────────────── */
-.field { margin-bottom: 14px; }
-.label {
-  font-size: 11px; font-weight: 500; color: var(--text2);
-  display: block; margin-bottom: 5px; letter-spacing: 0.03em;
-}
-.input-wrap { position: relative; }
-
-input, textarea, select {
-  width: 100%;
-  padding: 10px 14px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-input:focus, textarea:focus, select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
-}
-input::placeholder, textarea::placeholder { color: var(--text3); }
-input[type="password"] { font-family: var(--mono); letter-spacing: 0.1em; }
-
-textarea { resize: vertical; min-height: 72px; font-family: var(--mono); font-size: 12px; }
-select { appearance: none; cursor: pointer; }
-
-.eye-btn {
-  position: absolute; left: 10px; top: 50%;
-  transform: translateY(-50%);
-  background: none; border: none; cursor: pointer;
-  color: var(--text3); font-size: 14px; padding: 2px;
-  transition: color 0.15s; line-height: 1;
-}
-.eye-btn:hover { color: var(--text2); }
-input.has-eye { padding-left: 36px; }
-
-.hint { font-size: 11px; color: var(--text3); margin-top: 4px; }
-
-/* ─── TABS ─────────────────────────────── */
-.tabs-bar {
-  display: flex; gap: 4px;
-  background: var(--bg);
-  border-radius: var(--r); padding: 4px;
-  border: 1px solid var(--border);
-  margin-bottom: 20px;
-}
-.tab-btn {
-  flex: 1; padding: 8px 10px;
-  background: transparent; border: none;
-  border-radius: 8px;
-  color: var(--text3); cursor: pointer;
-  font-family: var(--sans); font-size: 12px; font-weight: 500;
-  transition: all 0.15s;
-}
-.tab-btn.active { background: var(--bg4); color: var(--accent2); }
-.tab-pane { display: none; }
-.tab-pane.active { display: block; }
-
-/* ─── BUTTONS ─────────────────────────────── */
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 10px 16px; border-radius: var(--r);
-  font-family: var(--sans); font-size: 13px; font-weight: 500;
-  cursor: pointer; border: 1px solid; transition: all 0.15s;
-  white-space: nowrap;
-}
-.btn-primary {
-  background: var(--accent); border-color: var(--accent); color: #fff;
-  box-shadow: 0 4px 16px rgba(99,102,241,0.35);
-}
-.btn-primary:hover { background: var(--accent2); border-color: var(--accent2); box-shadow: 0 6px 20px rgba(99,102,241,0.45); }
-.btn-secondary { background: var(--bg3); border-color: var(--border); color: var(--text2); }
-.btn-secondary:hover { border-color: var(--border2); color: var(--text); }
-.btn-danger { background: transparent; border-color: rgba(248,113,113,0.3); color: var(--danger); }
-.btn-danger:hover { background: rgba(248,113,113,0.1); }
-.btn-full { width: 100%; }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-/* ─── METRICS ─────────────────────────────── */
-.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
-.metric {
-  background: var(--bg2); border: 1px solid var(--border);
-  border-radius: var(--r2); padding: 16px;
-  position: relative; overflow: hidden;
-}
-.metric::before {
-  content: ''; position: absolute; top: 0; right: 0;
-  width: 3px; height: 100%;
-  background: linear-gradient(180deg, var(--accent), var(--accent3));
-}
-.metric-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
-.metric-value { font-size: 22px; font-weight: 600; color: var(--text); font-family: var(--mono); }
-.metric-sub { font-size: 10px; color: var(--text3); margin-top: 3px; }
-
-/* ─── PROGRESS ─────────────────────────────── */
-.progress-bar { height: 4px; background: var(--bg4); border-radius: 99px; overflow: hidden; margin: 12px 0; }
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent3));
-  border-radius: 99px;
-  transition: width 0.3s;
+.stButton > button[kind="primary"]:hover {
+    box-shadow: 0 8px 24px rgba(79,70,229,0.45) !important;
+    transform: translateY(-2px) !important;
+    color: #ffffff !important;
 }
 
-/* ─── GRID OPTIONS ─────────────────────────────── */
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-
-/* ─── TOGGLE ─────────────────────────────── */
-.toggle-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
+/* ═══════════════════════════════════════════
+   INPUTS
+═══════════════════════════════════════════ */
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stTextArea > div > textarea {
+    border-radius: 10px !important;
+    border: 1.5px solid #e2e8f0 !important;
+    background: #ffffff !important;
+    font-size: 0.9rem !important;
+    transition: border-color 0.15s, box-shadow 0.15s !important;
+    padding: 10px 14px !important;
 }
-.toggle-row:last-child { border-bottom: none; }
-.toggle-info .toggle-title { font-size: 13px; color: var(--text); font-weight: 500; }
-.toggle-info .toggle-sub { font-size: 11px; color: var(--text3); margin-top: 2px; }
-
-.toggle {
-  width: 36px; height: 20px; flex-shrink: 0;
-  background: var(--bg4); border-radius: 99px;
-  position: relative; cursor: pointer;
-  border: 1px solid var(--border);
-  transition: all 0.2s;
+.stTextInput > div > div > input:focus,
+.stNumberInput > div > div > input:focus,
+.stTextArea > div > textarea:focus {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.15) !important;
 }
-.toggle.on { background: var(--accent); border-color: var(--accent); }
-.toggle::after {
-  content: '';
-  position: absolute; top: 2px; right: 2px;
-  width: 14px; height: 14px;
-  border-radius: 50%; background: #fff;
-  transition: transform 0.2s;
+.stSelectbox > div > div,
+.stMultiSelect > div > div {
+    border-radius: 10px !important;
+    border: 1.5px solid #e2e8f0 !important;
+    background: #ffffff !important;
 }
-.toggle.on::after { transform: translateX(-16px); }
-
-/* ─── BADGE ─────────────────────────────── */
-.badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px; border-radius: 99px;
-  font-size: 10px; font-weight: 600; font-family: var(--mono);
-  border: 1px solid;
+label, .stCheckbox label p, .stToggle label p {
+    color: #374151 !important;
+    font-size: 0.87rem !important;
+    font-weight: 500 !important;
 }
-.badge-blue { background: rgba(99,102,241,0.12); color: var(--accent2); border-color: rgba(99,102,241,0.3); }
-.badge-green { background: rgba(52,211,153,0.1); color: var(--success); border-color: rgba(52,211,153,0.3); }
-.badge-amber { background: rgba(251,191,36,0.1); color: var(--warning); border-color: rgba(251,191,36,0.3); }
-.badge-purple { background: rgba(192,132,252,0.1); color: var(--accent3); border-color: rgba(192,132,252,0.3); }
-.badge-red { background: rgba(248,113,113,0.1); color: var(--danger); border-color: rgba(248,113,113,0.3); }
 
-/* ─── DUP CARD ─────────────────────────────── */
-.dup-list { display: flex; flex-direction: column; gap: 8px; }
+/* ═══════════════════════════════════════════
+   FORM / CARD
+═══════════════════════════════════════════ */
+[data-testid="stForm"] {
+    background: #ffffff !important;
+    border-radius: 18px !important;
+    padding: 28px !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
+}
+
+/* Section card */
+.ts-section {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 20px 22px;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    margin-bottom: 16px;
+}
+.ts-section-title {
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #6366f1; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+}
+
+/* ═══════════════════════════════════════════
+   RESULT CARDS
+═══════════════════════════════════════════ */
 .dup-card {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 14px;
-  background: var(--bg2); border: 1px solid var(--border);
-  border-radius: var(--r); transition: all 0.15s;
-  cursor: pointer;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    transition: all 0.18s ease;
+    display: flex; align-items: center; gap: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
-.dup-card:hover { border-color: var(--border2); background: var(--bg3); }
-.dup-card.selected { border-color: var(--accent); background: rgba(99,102,241,0.05); }
-.dup-icon {
-  width: 36px; height: 36px; border-radius: 9px;
-  background: var(--bg3); border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px; flex-shrink: 0;
+.dup-card:hover {
+    border-color: #c7d2fe;
+    box-shadow: 0 4px 16px rgba(99,102,241,0.10);
+    transform: translateX(-2px);
 }
-.dup-body { flex: 1; min-width: 0; }
-.dup-name { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dup-meta { font-size: 11px; color: var(--text3); margin-top: 2px; }
-.dup-check {
-  width: 18px; height: 18px; border-radius: 5px;
-  border: 1.5px solid var(--border2); flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
+.dup-card-icon {
+    font-size: 1.6rem; min-width: 36px; text-align: center;
+    background: #f0f0fe; border-radius: 10px; padding: 8px;
 }
-.dup-card.selected .dup-check {
-  background: var(--accent); border-color: var(--accent);
-  color: #fff; font-size: 10px;
+.dup-card-body { flex: 1; min-width: 0; }
+.dup-card-name { font-weight: 600; color: #1e1b4b; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dup-card-meta { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+.dup-badge {
+    font-size: 0.68rem; font-weight: 700; padding: 3px 9px;
+    border-radius: 99px; white-space: nowrap;
+}
+.badge-fileid  { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.badge-md5     { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.badge-phash   { background: #fefce8; color: #854d0e; border: 1px solid #fde68a; }
+.badge-exact   { background: #f0f0fe; color: #4338ca; border: 1px solid #c7d2fe; }
+
+/* Alert / warning banner */
+.ts-alert-warn {
+    background: linear-gradient(135deg, #fff7ed, #fef3c7);
+    border: 1px solid #fcd34d;
+    border-radius: 12px;
+    padding: 12px 18px;
+    margin-bottom: 16px;
+    display: flex; align-items: center; gap: 10px;
+}
+.ts-alert-ok {
+    background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+    border: 1px solid #86efac;
+    border-radius: 12px;
+    padding: 12px 18px;
+    margin-bottom: 16px;
 }
 
-/* ─── HELP CARDS ─────────────────────────────── */
-.help-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
-.help-card {
-  padding: 12px 14px;
-  background: var(--bg3); border: 1px solid var(--border);
-  border-radius: var(--r); cursor: pointer; transition: all 0.15s;
+/* ═══════════════════════════════════════════
+   PROGRESS
+═══════════════════════════════════════════ */
+.stProgress > div > div > div > div {
+    background: linear-gradient(90deg, #6366f1, #8b5cf6, #c084fc) !important;
+    border-radius: 99px !important;
+    animation: shimmer 2s infinite linear;
 }
-.help-card:hover { border-color: var(--border2); }
-.help-card-icon { font-size: 18px; margin-bottom: 6px; }
-.help-card-title { font-size: 12px; font-weight: 500; color: var(--text); }
-.help-card-sub { font-size: 10px; color: var(--text3); margin-top: 2px; }
-
-/* ─── CHANNEL CHIP ─────────────────────────────── */
-.channel-chip {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px;
-  background: rgba(99,102,241,0.08); border: 1px solid var(--border);
-  border-radius: var(--r); margin-bottom: 14px;
-}
-.channel-avatar {
-  width: 32px; height: 32px; border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent), var(--accent3));
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px; flex-shrink: 0;
+@keyframes shimmer {
+    0%   { background-position: -200% center; }
+    100% { background-position:  200% center; }
 }
 
-/* ─── SELECT CHANNEL ─────────────────────────────── */
-.channel-list { display: flex; flex-direction: column; gap: 6px; }
-.channel-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px; border-radius: var(--r);
-  border: 1px solid var(--border); cursor: pointer;
-  transition: all 0.15s; background: var(--bg3);
-}
-.channel-item:hover { border-color: var(--border2); }
-.channel-item.selected { border-color: var(--accent); background: rgba(99,102,241,0.08); }
-.channel-item-icon { width: 30px; height: 30px; border-radius: 7px; background: var(--bg4); display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
-.channel-item-name { font-size: 13px; font-weight: 500; color: var(--text); }
-.channel-item-type { font-size: 10px; color: var(--text3); }
-
-/* ─── ALERT ─────────────────────────────── */
-.alert {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 12px 14px; border-radius: var(--r);
-  margin-bottom: 14px; border: 1px solid;
-}
-.alert-success { background: rgba(52,211,153,0.08); border-color: rgba(52,211,153,0.2); color: var(--success); }
-.alert-warn { background: rgba(251,191,36,0.08); border-color: rgba(251,191,36,0.2); color: var(--warning); }
-.alert-info { background: rgba(99,102,241,0.08); border-color: var(--border); color: var(--accent2); }
-.alert-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
-.alert-text { font-size: 12px; line-height: 1.5; }
-
-/* ─── ACTION BAR ─────────────────────────────── */
-.action-bar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin-bottom: 16px;
+/* ═══════════════════════════════════════════
+   DATA TABLE
+═══════════════════════════════════════════ */
+.stDataEditor {
+    border-radius: 14px !important;
+    overflow: hidden !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.04) !important;
 }
 
-/* ─── SECTION DIVIDER ─────────────────────────────── */
-.section-head {
-  display: flex; align-items: center; gap: 8px;
-  margin-bottom: 14px;
+/* ═══════════════════════════════════════════
+   TABS
+═══════════════════════════════════════════ */
+.stTabs [data-baseweb="tab-list"] {
+    background: #f1f5f9 !important;
+    border-radius: 12px !important;
+    padding: 4px !important;
+    gap: 4px !important;
 }
-.section-head h3 { font-size: 13px; font-weight: 600; color: var(--text2); }
-.section-line { flex: 1; height: 1px; background: var(--border); }
-
-/* ─── OPTION PILLS ─────────────────────────────── */
-.pill-group { display: flex; gap: 6px; flex-wrap: wrap; }
-.pill {
-  padding: 5px 12px; border-radius: 99px;
-  border: 1px solid var(--border);
-  font-size: 12px; color: var(--text2); cursor: pointer;
-  transition: all 0.15s; background: var(--bg3);
+.stTabs [data-baseweb="tab"] {
+    border-radius: 9px !important;
+    font-weight: 600 !important;
+    font-size: 0.86rem !important;
+    color: #64748b !important;
 }
-.pill.active { border-color: var(--accent); color: var(--accent2); background: rgba(99,102,241,0.1); }
-
-/* ─── SCROLL STYLED ─────────────────────────────── */
-.scroll-inner { max-height: 260px; overflow-y: auto; padding-right: 4px; }
-.scroll-inner::-webkit-scrollbar { width: 3px; }
-.scroll-inner::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; }
-
-/* ─── FOOTER ─────────────────────────────── */
-.footer { text-align: center; padding: 20px 0 0; color: var(--text3); font-size: 11px; }
-
-/* ─── MOBILE ─────────────────────────────── */
-@media (max-width: 640px) {
-  .sidebar { display: none; }
-  .metrics { grid-template-columns: 1fr 1fr; }
-  .grid-2 { grid-template-columns: 1fr; }
-  .help-grid { grid-template-columns: 1fr; }
-  .content { padding: 16px; }
-  .topbar { padding: 12px 16px; }
+.stTabs [aria-selected="true"] {
+    background: #ffffff !important;
+    color: #4f46e5 !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08) !important;
 }
 
-/* ─── SCAN ANIMATION ─────────────────────────────── */
-.scan-pulse {
-  display: inline-block;
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--accent);
-  animation: scanpulse 1.2s ease-in-out infinite;
+/* ═══════════════════════════════════════════
+   EXPANDER
+═══════════════════════════════════════════ */
+[data-testid="stExpander"] {
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
 }
-@keyframes scanpulse {
-  0%,100%{transform:scale(1);opacity:1}
-  50%{transform:scale(1.5);opacity:0.5}
+[data-testid="stExpander"] summary {
+    font-weight: 600 !important;
+    color: #374151 !important;
+    background: #f8fafc !important;
+    padding: 12px 16px !important;
+}
+
+/* ═══════════════════════════════════════════
+   MISC
+═══════════════════════════════════════════ */
+hr { border-color: #f1f5f9 !important; margin: 1.2rem 0 !important; }
+[data-testid="stAlert"] { border-radius: 12px !important; }
+h1,h2,h3 { color: #1e1b4b !important; }
+h2 { font-size: 1.1rem !important; }
+h3 { font-size: 1rem !important; }
+
+.footer-bar {
+    text-align: center; padding: 20px; color: #94a3b8;
+    font-size: 0.78rem; margin-top: 40px;
+    border-top: 1px solid #e2e8f0;
+}
+.footer-bar strong { color: #6366f1; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #818cf8; }
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .main .block-container { padding: 1rem 0.8rem !important; }
+    .ts-header { padding: 16px 18px; gap: 12px; }
+    .ts-header-title { font-size: 1.4rem; }
+    [data-testid="metric-container"] { padding: 14px 12px !important; }
+    .dup-card { padding: 10px 12px; gap: 10px; }
 }
 </style>
-</head>
-<body>
+""")
 
-<div class="app">
+# ================== Loop ثابت في session_state ==================
+if '_bg_loop' not in st.session_state:
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True, name="TelegramLoop")
+    t.start()
+    st.session_state._bg_loop = loop
+    st.session_state._bg_thread = t
 
-  <!-- ─── SIDEBAR ─────────────────────────────── -->
-  <aside class="sidebar" id="sidebar">
-    <div class="logo">
-      <div class="logo-icon">🧹</div>
-      <div class="logo-name">TeleSweep</div>
-      <div class="logo-ver">v5.0 · Telegram</div>
+def run_sync(coro):
+    future = asyncio.run_coroutine_threadsafe(coro, st.session_state._bg_loop)
+    return future.result(timeout=120)
+
+# ================== الثوابت ==================
+BATCH_SCAN_SIZE   = 50
+BATCH_DELETE_SIZE = 25
+PAGE_SIZE         = 50
+PHASH_SIZE_LIMIT  = 5 * 1024 * 1024
+MD5_SIZE_LIMIT    = 5 * 1024 * 1024
+
+# ================== دوال مساعدة ==================
+def fmt_size(n: int) -> str:
+    if n == 0: return "0 B"
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024: return f"{n:.1f} {u}"
+        n /= 1024
+    return f"{n:.1f} PB"
+
+def get_thumb(media):
+    if isinstance(media, MessageMediaPhoto):
+        if not media.photo: return None
+        for s in media.photo.sizes:
+            if isinstance(s, PhotoSize) and getattr(s, 'type', '') == 'm': return s
+        sizes = [s for s in media.photo.sizes if hasattr(s, 'size')]
+        return min(sizes, key=lambda s: s.size) if sizes else None
+    if isinstance(media, MessageMediaDocument):
+        doc = media.document
+        if doc and doc.thumbs: return min(doc.thumbs, key=lambda t: getattr(t, 'size', 0))
+    return None
+
+# ================== Exact Video Matching ==================
+
+def is_exact_video_duplicate(a: dict, b: dict,
+                             duration_tolerance: float = 0.01,
+                             size_tolerance_percent: float = 0.5) -> bool:
+    """
+    تطابق صارم جداً مع هامش ضئيل:
+    - المدة: فرق <= duration_tolerance (افتراضي 0.01 ثانية)
+    - الحجم: فرق <= size_tolerance_percent % (افتراضي 0.5%)
+    - الأبعاد: يجب أن تتطابق تماماً (أو كلاهما غير معروف)
+    """
+    d1 = float(a.get("duration", 0))
+    d2 = float(b.get("duration", 0))
+    s1 = int(a.get("size", 0))
+    s2 = int(b.get("size", 0))
+    w1 = int(a.get("width", 0))
+    h1 = int(a.get("height", 0))
+    w2 = int(b.get("width", 0))
+    h2 = int(b.get("height", 0))
+
+    if d1 == 0 or d2 == 0 or s1 == 0 or s2 == 0:
+        return False
+
+    # المدة
+    if abs(d1 - d2) > duration_tolerance:
+        return False
+
+    # الحجم (نسبة مئوية)
+    size_diff = abs(s1 - s2)
+    max_size = max(s1, s2)
+    if max_size > 0 and (size_diff / max_size) * 100 > size_tolerance_percent:
+        return False
+
+    # الأبعاد: تطابق تام
+    if (w1 != w2 or h1 != h2) and not (w1 == 0 and h1 == 0 and w2 == 0 and h2 == 0):
+        return False
+
+    return True
+
+
+class _UnionFind:
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.rank   = [0] * n
+
+    def find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, x, y):
+        rx, ry = self.find(x), self.find(y)
+        if rx == ry: return
+        if self.rank[rx] < self.rank[ry]: rx, ry = ry, rx
+        self.parent[ry] = rx
+        if self.rank[rx] == self.rank[ry]: self.rank[rx] += 1
+
+# ================== دوال Telethon async ==================
+async def _make_client(api_id, api_hash, session_string=None):
+    session = StringSession(session_string) if session_string else StringSession()
+    client = TelegramClient(session, int(api_id), api_hash)
+    await client.connect()
+    return client
+
+async def _send_code(client, phone):
+    return await client.send_code_request(phone)
+
+async def _sign_in(client, phone, code, phone_code_hash):
+    return await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+
+async def _sign_in_password(client, password):
+    return await client.sign_in(password=password)
+
+async def _is_authorized(client):
+    return await client.is_user_authorized()
+
+async def _get_entity(client, channel_input):
+    if "/+" in channel_input or "/joinchat/" in channel_input:
+        from telethon.tl.functions.messages import CheckChatInviteRequest
+        hash_part = channel_input.split("/+")[-1] if "/+" in channel_input else channel_input.split("/joinchat/")[-1]
+        result = await client(CheckChatInviteRequest(hash_part))
+        if hasattr(result, 'chat'): return result.chat
+        raise Exception("تعذّر الوصول — تأكد أنك عضو في المجموعة أولاً")
+    return await client.get_entity(channel_input)
+
+async def _get_messages(client, channel, offset_id, limit):
+    msgs = []
+    async for msg in client.iter_messages(channel, offset_id=offset_id, limit=limit, reverse=False):
+        msgs.append(msg)
+    return msgs
+
+async def _delete_messages(client, channel, ids):
+    await client.delete_messages(channel, ids)
+
+def get_session_string(client):
+    return client.session.save()
+
+# ================== استخراج معلومات الملف ==================
+async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash: bool) -> Optional[Dict]:
+    media = msg.media
+    if not media: return None
+
+    info = {
+        "id": msg.id, "file_id": None,
+        "size": 0, "duration": 0, "width": 0, "height": 0,
+        "mime": "", "type": "", "date": msg.date.isoformat(),
+        "md5": None, "phash": None, "views": msg.views or 0, "name": None
+    }
+
+    if isinstance(media, MessageMediaDocument):
+        doc = media.document
+        info["file_id"] = f"{doc.id}:{doc.dc_id}"
+        info["size"]    = doc.size or 0
+        info["mime"]    = doc.mime_type or ""
+        info["type"]    = ("video"    if info["mime"].startswith("video/")
+                           else "image" if info["mime"].startswith("image/")
+                           else "document")
+        for attr in doc.attributes:
+            if isinstance(attr, DocumentAttributeVideo):
+                info["duration"] = attr.duration or 0
+                info["width"]    = attr.w or 0
+                info["height"]   = attr.h or 0
+            if hasattr(attr, 'file_name'): info["name"] = attr.file_name
+
+    elif isinstance(media, MessageMediaPhoto):
+        photo = media.photo
+        info["file_id"] = f"{photo.id}:{photo.dc_id}"
+        info["type"]    = "photo"
+        info["mime"]    = "image/jpeg"
+        sizes = [s for s in getattr(photo, "sizes", []) if hasattr(s, "size") and s.size > 0]
+        if sizes:
+            largest = max(sizes, key=lambda s: s.size)
+            info["size"]   = largest.size
+            info["width"]  = getattr(largest, 'w', 0) or 0
+            info["height"] = getattr(largest, 'h', 0) or 0
+        else:
+            info["size"] = 0
+    else:
+        return None
+
+    if compute_md5 or compute_phash:
+        thumb = get_thumb(media) if compute_phash else None
+        data = None
+        try:
+            if thumb:
+                data = await client.download_media(thumb, file=bytes)
+            else:
+                data = await client.download_media(msg, file=bytes,
+                                                   size=PHASH_SIZE_LIMIT if compute_phash else None)
+            if compute_md5 and info["size"] <= MD5_SIZE_LIMIT and data:
+                info["md5"] = hashlib.md5(data).hexdigest()
+            if compute_phash and _HAS_IMAGEHASH and info["type"] in ("photo", "image") and data:
+                try:
+                    with io.BytesIO(data) as bio:
+                        with Image.open(bio) as img:
+                            info["phash"] = str(imagehash.phash(img))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        finally:
+            del data
+            gc.collect()
+
+    return info
+
+# ================== قاعدة البيانات ==================
+class Database:
+    def __init__(self, path):
+        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self._init_tables()
+
+    def _init_tables(self):
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS seen_files (
+                channel_id INTEGER, msg_id INTEGER, file_id TEXT,
+                file_size INTEGER, duration INTEGER, width INTEGER DEFAULT 0, height INTEGER DEFAULT 0,
+                md5_hash TEXT, phash TEXT,
+                msg_date TEXT, file_type TEXT, mime_type TEXT, views INTEGER, file_name TEXT,
+                PRIMARY KEY (channel_id, msg_id)
+            ) WITHOUT ROWID
+        """)
+        try:
+            self.conn.execute("ALTER TABLE seen_files ADD COLUMN width INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self.conn.execute("ALTER TABLE seen_files ADD COLUMN height INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS resume_meta (
+                channel_id INTEGER PRIMARY KEY,
+                last_scanned_id INTEGER DEFAULT 0,
+                total_scanned INTEGER DEFAULT 0,
+                files_saved INTEGER DEFAULT 0
+            )
+        """)
+        self.conn.commit()
+
+    def get_resume_state(self, channel_id):
+        row = self.conn.execute(
+            "SELECT last_scanned_id, total_scanned, files_saved FROM resume_meta WHERE channel_id=?",
+            (channel_id,)
+        ).fetchone()
+        return (row[0], row[1], row[2]) if row else (0, 0, 0)
+
+    def save_progress(self, channel_id, last_id, total_scanned, files_saved):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO resume_meta VALUES (?,?,?,?)",
+            (channel_id, last_id, total_scanned, files_saved)
+        )
+        self.conn.commit()
+
+    def buffer_insert(self, record):
+        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
+        self.conn.commit()
+
+    def delete_msg_records(self, channel_id, msg_ids):
+        self.conn.executemany(
+            "DELETE FROM seen_files WHERE channel_id=? AND msg_id=?",
+            [(channel_id, mid) for mid in msg_ids]
+        )
+        self.conn.commit()
+
+    def get_all_videos(self, channel_id, min_size=0) -> List[Dict]:
+        rows = self.conn.execute(
+            "SELECT msg_id, file_id, file_size, duration, width, height, msg_date, file_name "
+            "FROM seen_files WHERE channel_id=? AND file_type='video' AND file_size>=?",
+            (channel_id, min_size)
+        ).fetchall()
+        return [
+            {"id": r[0], "file_id": r[1], "size": r[2], "duration": r[3],
+             "width": r[4], "height": r[5], "date": r[6], "name": r[7], "type": "video"}
+            for r in rows
+        ]
+
+    def stream_duplicates(self, channel_id, keep_strategy, min_size=0,
+                          use_md5=False, use_phash=False, use_exact_video=False,
+                          duration_tolerance=0.01, size_tolerance_percent=0.5):
+        order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
+        duplicates = []
+        seen_msg_ids: set = set()
+
+        def add_group(group, match_type):
+            keeper = group[0]
+            for dup in group[1:]:
+                mid = dup[0]
+                if mid not in seen_msg_ids:
+                    seen_msg_ids.add(mid)
+                    duplicates.append({
+                        "id": mid, "size": dup[1], "date": dup[2], "file_id": dup[3],
+                        "duration": dup[4], "phash": dup[5], "type": dup[6],
+                        "mime": dup[7], "name": dup[8], "keeper_id": keeper[0],
+                        "match_type": match_type
+                    })
+
+        # Layer 1: file_id
+        cursor = self.conn.execute(
+            "SELECT file_id FROM seen_files WHERE channel_id=? AND file_size>=? "
+            "GROUP BY file_id HAVING COUNT(*)>1",
+            (channel_id, min_size)
+        )
+        for row in cursor:
+            group = self.conn.execute(
+                f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                f"FROM seen_files WHERE channel_id=? AND file_id=? ORDER BY {order}",
+                (channel_id, row[0])
+            ).fetchall()
+            add_group(group, "file_id")
+
+        # Layer 2: MD5
+        if use_md5:
+            cursor = self.conn.execute(
+                "SELECT md5_hash FROM seen_files WHERE channel_id=? AND md5_hash IS NOT NULL AND file_size>=? "
+                "GROUP BY md5_hash HAVING COUNT(DISTINCT file_id)>1",
+                (channel_id, min_size)
+            )
+            for row in cursor:
+                group = self.conn.execute(
+                    f"SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                    f"FROM seen_files WHERE channel_id=? AND md5_hash=? ORDER BY {order}",
+                    (channel_id, row[0])
+                ).fetchall()
+                add_group(group, "md5")
+
+        # Layer 3: pHash
+        if use_phash and _HAS_IMAGEHASH:
+            rows = self.conn.execute(
+                "SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
+                "FROM seen_files WHERE channel_id=? AND phash IS NOT NULL "
+                "AND file_size>=? AND file_type IN ('photo','image')",
+                (channel_id, min_size)
+            ).fetchall()
+
+            if rows:
+                n   = len(rows)
+                uf2 = _UnionFind(n)
+                hashes = []
+                for r in rows:
+                    try:    hashes.append(imagehash.hex_to_hash(r[5]))
+                    except: hashes.append(None)
+
+                for i in range(n):
+                    if hashes[i] is None or rows[i][0] in seen_msg_ids: continue
+                    for j in range(i + 1, n):
+                        if hashes[j] is None or rows[j][0] in seen_msg_ids: continue
+                        if rows[i][3] == rows[j][3]: continue
+                        if (hashes[i] - hashes[j]) <= 6:
+                            uf2.union(i, j)
+
+                groups2: Dict[int, List[int]] = {}
+                for idx in range(n):
+                    root = uf2.find(idx)
+                    groups2.setdefault(root, []).append(idx)
+
+                for root, members in groups2.items():
+                    if len(members) < 2: continue
+                    if keep_strategy == "largest":
+                        members.sort(key=lambda i: rows[i][1], reverse=True)
+                    elif keep_strategy == "newest":
+                        members.sort(key=lambda i: rows[i][2], reverse=True)
+                    else:
+                        members.sort(key=lambda i: rows[i][2])
+                    keeper = rows[members[0]]
+                    for idx in members[1:]:
+                        r = rows[idx]
+                        if r[0] in seen_msg_ids: continue
+                        seen_msg_ids.add(r[0])
+                        duplicates.append({
+                            "id": r[0], "size": r[1], "date": r[2], "file_id": r[3],
+                            "duration": r[4], "phash": r[5], "type": r[6],
+                            "mime": r[7], "name": r[8], "keeper_id": keeper[0],
+                            "match_type": "phash"
+                        })
+
+        # Layer 4: Exact Video
+        if use_exact_video:
+            videos = self.get_all_videos(channel_id, min_size)
+
+            sort_key = {"oldest": lambda v: v["date"],
+                        "newest": lambda v: v["date"],
+                        "largest": lambda v: v["size"]}[keep_strategy]
+            reverse = keep_strategy == "newest"
+            videos.sort(key=sort_key, reverse=reverse)
+
+            n = len(videos)
+            uf = _UnionFind(n)
+
+            for i in range(n):
+                if videos[i]["id"] in seen_msg_ids: continue
+                for j in range(i + 1, n):
+                    if videos[j]["id"] in seen_msg_ids: continue
+                    if videos[i]["file_id"] == videos[j]["file_id"]: continue
+                    if is_exact_video_duplicate(videos[i], videos[j],
+                                                duration_tolerance, size_tolerance_percent):
+                        uf.union(i, j)
+
+            groups: Dict[int, List[int]] = {}
+            for idx in range(n):
+                root = uf.find(idx)
+                groups.setdefault(root, []).append(idx)
+
+            for root, members in groups.items():
+                if len(members) < 2: continue
+                keeper_idx  = members[0]
+                keeper_id   = videos[keeper_idx]["id"]
+                for idx in members[1:]:
+                    dup = videos[idx]
+                    if dup["id"] in seen_msg_ids: continue
+                    seen_msg_ids.add(dup["id"])
+                    row = self.conn.execute(
+                        "SELECT msg_id, file_size, msg_date, file_id, duration, phash, "
+                        "file_type, mime_type, file_name "
+                        "FROM seen_files WHERE channel_id=? AND msg_id=?",
+                        (channel_id, dup["id"])
+                    ).fetchone()
+                    if row:
+                        duplicates.append({
+                            "id": row[0], "size": row[1], "date": row[2], "file_id": row[3],
+                            "duration": row[4], "phash": row[5], "type": row[6],
+                            "mime": row[7], "name": row[8], "keeper_id": keeper_id,
+                            "match_type": "exact_video"
+                        })
+
+        return duplicates
+
+    def clear_channel(self, channel_id):
+        self.conn.execute("DELETE FROM seen_files WHERE channel_id=?", (channel_id,))
+        self.conn.execute("DELETE FROM resume_meta WHERE channel_id=?", (channel_id,))
+        self.conn.commit()
+
+    def close(self): self.conn.close()
+
+# ================== حالة الجلسة ==================
+defaults = {
+    'client': None, 'step': 'login', 'db_path': None, 'channel': None,
+    'scan_params': {}, 'page': 0, 'selected_ids': set(), 'auto_mode': False,
+    'total_scanned': 0, 'files_saved': 0, 'phone_code_hash': None,
+    'session_string': None, 'api_id': None, 'api_hash': None, 'phone': None,
+    'last_deleted_count': 0, 'last_deleted_failed': 0,
+    'auto_scan_running': False, 'scan_speed': 0.0,
+    'me': None, '_confirm_rescan': False, 'my_channels': None,
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ================== الشريط الجانبي ==================
+with st.sidebar:
+    st.html("""
+    <div class='sidebar-logo'>
+        <div class='logo-icon'>🧹</div>
+        <div class='logo-name'>TeleSweep</div>
+        <div class='logo-ver'>v5.0 · Telegram</div>
     </div>
+    """)
+    st.divider()
 
-    <nav class="nav">
-      <div class="nav-item active" onclick="goTo('login')" id="nav-login">
-        <span class="icon">🔐</span> تسجيل الدخول
-      </div>
-      <div class="nav-item" onclick="goTo('channel')" id="nav-channel">
-        <span class="icon">📢</span> اختيار القناة
-      </div>
-      <div class="nav-item" onclick="goTo('scan')" id="nav-scan">
-        <span class="icon">🔍</span> المسح
-      </div>
-      <div class="nav-item" onclick="goTo('results')" id="nav-results">
-        <span class="icon">📋</span> النتائج
-      </div>
-    </nav>
+    if st.session_state.client and st.session_state.step not in ['login', 'verify_code']:
+        try:
+            if not st.session_state.me:
+                st.session_state.me = run_sync(st.session_state.client.get_me())
+            me = st.session_state.me
+            st.markdown(f"**👤 {me.first_name}**")
+            if me.username: st.markdown(f"@{me.username}")
+        except: pass
 
-    <div class="sidebar-footer">
-      <div class="user-chip" id="user-chip" style="display:none">
-        <div class="avatar" id="user-avatar">؟</div>
-        <div class="user-info">
-          <div class="user-name" id="user-name">—</div>
-          <div class="user-sub">متصل</div>
+        if st.session_state.session_string:
+            with st.expander("🔑 Session String"):
+                st.caption("احفظها للدخول بدون SMS في المرة القادمة")
+                st.code(st.session_state.session_string, language=None)
+
+    if st.session_state.channel:
+        st.markdown(f"**📢 {getattr(st.session_state.channel, 'title', 'قناة')}**")
+
+    st.divider()
+
+    current_step = st.session_state.step
+    if current_step == 'verify_code':
+        if st.button("⬅️ تسجيل الدخول", use_container_width=True):
+            st.session_state.step = 'login'; st.rerun()
+    elif current_step == 'scanning':
+        if st.button("⬅️ تغيير القناة", use_container_width=True):
+            st.session_state.step = 'channel'
+            st.session_state.auto_scan_running = False; st.rerun()
+    elif current_step == 'results':
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("⬅️ مسح", use_container_width=True):
+                st.session_state.step = 'scanning'
+                st.session_state.selected_ids = set(); st.rerun()
+        with c2:
+            if st.button("📋 قناة", use_container_width=True):
+                st.session_state.step = 'channel'
+                st.session_state.selected_ids = set(); st.rerun()
+
+    st.divider()
+    if current_step not in ['login', 'verify_code']:
+        if st.button("🚪 تسجيل الخروج", use_container_width=True):
+            for k in ['client', 'me', 'phone', 'api_id', 'api_hash', 'session_string']:
+                st.session_state.pop(k, None)
+            st.session_state.step = 'login'; st.rerun()
+
+    st.markdown("<p style='text-align:center;font-size:0.8rem;color:#64748b;margin-top:8px;'>© F.ALSALEH</p>",
+                unsafe_allow_html=True)
+
+# ================== المحتوى الرئيسي ==================
+st.html("""
+<div class="ts-header">
+  <div class="ts-header-icon">🧹</div>
+  <div style="flex:1;">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span class="ts-header-title">TeleSweep</span>
+      <span class="ts-badge">v5.0</span>
+    </div>
+    <p class="ts-header-sub">كشف وإزالة المكررات · File ID · MD5 · pHash · Exact Video Match</p>
+  </div>
+</div>
+""")
+
+# ---------- تسجيل الدخول ----------
+if st.session_state.step == 'login':
+    tab_phone, tab_session = st.tabs(["📱 رقم الهاتف", "🔑 Session String"])
+
+    with tab_phone:
+        with st.form("login_form"):
+            st.caption("للاستخدام الأول أو عند انتهاء الجلسة")
+            api_id   = st.text_input("API ID*", type="password")
+            api_hash = st.text_input("API Hash*", type="password")
+            phone    = st.text_input("رقم الهاتف*", placeholder="+963xxxxxxxxx")
+            if st.form_submit_button("إرسال رمز التحقق", use_container_width=True, type="primary"):
+                if not api_id or not api_hash or not phone:
+                    st.error("جميع الحقول مطلوبة")
+                else:
+                    try:
+                        client = run_sync(_make_client(api_id, api_hash))
+                        if not run_sync(_is_authorized(client)):
+                            sent = run_sync(_send_code(client, phone))
+                            st.session_state.phone_code_hash = sent.phone_code_hash
+                            st.session_state.session_string  = get_session_string(client)
+                            st.session_state.api_id   = api_id
+                            st.session_state.api_hash = api_hash
+                            st.session_state.phone    = phone
+                            st.session_state.client   = client
+                            st.session_state.step     = 'verify_code'
+                            st.rerun()
+                        else:
+                            st.session_state.session_string = get_session_string(client)
+                            st.session_state.api_id   = api_id
+                            st.session_state.api_hash = api_hash
+                            st.session_state.client   = client
+                            st.session_state.step     = 'channel'
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"خطأ: {e}")
+
+    with tab_session:
+        with st.form("session_form"):
+            st.caption("ادخل الـ Session String المحفوظة — بدون حاجة لرمز SMS")
+            s_api_id   = st.text_input("API ID*", type="password", key="s_api_id")
+            s_api_hash = st.text_input("API Hash*", type="password", key="s_api_hash")
+            s_session  = st.text_area("Session String*", placeholder="1BVtsOK...", height=100, key="s_session")
+            if st.form_submit_button("دخول مباشر", use_container_width=True, type="primary"):
+                if not s_api_id or not s_api_hash or not s_session:
+                    st.error("جميع الحقول مطلوبة")
+                else:
+                    try:
+                        client = run_sync(_make_client(s_api_id, s_api_hash, s_session.strip()))
+                        if run_sync(_is_authorized(client)):
+                            st.session_state.session_string = get_session_string(client)
+                            st.session_state.api_id   = s_api_id
+                            st.session_state.api_hash = s_api_hash
+                            st.session_state.client   = client
+                            st.session_state.step     = 'channel'
+                            st.rerun()
+                        else:
+                            st.error("الجلسة منتهية، استخدم تبويب رقم الهاتف")
+                    except Exception as e:
+                        st.error(f"خطأ: {e}")
+
+# ---------- OTP ----------
+elif st.session_state.step == 'verify_code':
+    with st.form("verify_form"):
+        st.subheader("📲 تأكيد الحساب")
+        st.info("أدخل الرمز الذي وصلك على تيليجرام")
+        code     = st.text_input("رمز OTP*")
+        password = st.text_input("كلمة مرور 2FA (إن وجدت)", type="password")
+        if st.form_submit_button("تأكيد", use_container_width=True):
+            try:
+                client = run_sync(_make_client(st.session_state.api_id, st.session_state.api_hash,
+                                               st.session_state.session_string))
+                run_sync(_sign_in(client, st.session_state.phone, code, st.session_state.phone_code_hash))
+                st.session_state.session_string = get_session_string(client)
+                st.session_state.client = client
+                st.session_state.step   = 'channel'
+                st.rerun()
+            except SessionPasswordNeededError:
+                if not password:
+                    st.error("الحساب محمي بـ 2FA، أدخل كلمة المرور")
+                else:
+                    try:
+                        client = run_sync(_make_client(st.session_state.api_id, st.session_state.api_hash,
+                                                       st.session_state.session_string))
+                        run_sync(_sign_in_password(client, password))
+                        st.session_state.session_string = get_session_string(client)
+                        st.session_state.client = client
+                        st.session_state.step   = 'channel'
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"كلمة مرور غير صحيحة: {e}")
+            except Exception as e:
+                st.error(f"رمز غير صحيح: {e}")
+
+    st.markdown("---")
+    if st.button("🔄 إعادة إرسال الرمز"):
+        try:
+            client = run_sync(_make_client(st.session_state.api_id, st.session_state.api_hash,
+                                           st.session_state.session_string))
+            sent = run_sync(_send_code(client, st.session_state.phone))
+            st.session_state.phone_code_hash = sent.phone_code_hash
+            st.session_state.session_string  = get_session_string(client)
+            st.session_state.client = client
+            st.success("✅ تم إعادة إرسال الرمز")
+        except Exception as e:
+            st.error(f"خطأ: {e}")
+
+# ---------- إعدادات القناة (مع جلب القنوات بشكل آمن) ----------
+elif st.session_state.step == 'channel':
+    st.success("✅ تم تسجيل الدخول")
+    
+    # --- جلب قائمة القنوات ---
+    if st.button("📋 جلب قنواتي ومجموعاتي", use_container_width=True):
+        client = st.session_state.get('client')
+        if client is None:
+            st.error("❌ لم يتم العثور على جلسة تيليجرام. الرجاء إعادة تسجيل الدخول.")
+        else:
+            with st.spinner("جاري جلب القنوات والمجموعات..."):
+                try:
+                    async def fetch_dialogs():
+                        if not client.is_connected():
+                            await client.connect()
+                        dialogs = await client.get_dialogs()
+                        channels = []
+                        for d in dialogs:
+                            if d.is_channel or d.is_group:
+                                channels.append({
+                                    "name": d.name,
+                                    "id": d.id,
+                                    "entity": d.entity
+                                })
+                        return channels
+                    st.session_state.my_channels = run_sync(fetch_dialogs())
+                    if st.session_state.my_channels:
+                        st.success(f"✅ تم جلب {len(st.session_state.my_channels)} قناة/مجموعة")
+                    else:
+                        st.info("ℹ️ لم يتم العثور على أي قنوات أو مجموعات.")
+                except Exception as e:
+                    st.error(f"❌ خطأ في جلب القنوات: {e}")
+
+    channel_input = None
+    if st.session_state.my_channels:
+        options = {f"{c['name']} (ID: {c['id']})": c for c in st.session_state.my_channels}
+        selected = st.selectbox("اختر قناة أو مجموعة:", list(options.keys()))
+        channel_input = options[selected]["entity"]
+        st.caption("أو يمكنك إدخال رابط يدويًا أدناه (سيتم تجاهل الاختيار أعلاه)")
+    
+    manual_input = st.text_input("أو أدخل رابط القناة / المجموعة يدويًا", placeholder="@username أو https://t.me/+xxx")
+    if manual_input:
+        channel_input = manual_input
+
+    col1, col2 = st.columns(2)
+    with col1:
+        media_types   = st.multiselect("أنواع الملفات", ["photo", "video", "document"],
+                                       default=["photo", "video"])
+        keep_strategy = st.selectbox("استراتيجية الاحتفاظ",
+                                     ["oldest (الأقدم)", "newest (الأحدث)", "largest (الأكبر)"])
+        keep_map = {"oldest (الأقدم)": "oldest", "newest (الأحدث)": "newest", "largest (الأكبر)": "largest"}
+    with col2:
+        min_size_mb = st.number_input("الحد الأدنى للحجم (MB)", 0.0, 10000.0, 0.0, step=1.0)
+        auto_mode   = st.toggle("الوضع الآلي", False, help="يفحص القناة كاملاً دفعة بعد دفعة بشكل تلقائي")
+
+    st.markdown("---")
+    st.subheader("🔬 طبقات اكتشاف التكرار")
+    st.caption("Layer 1 (File ID) دائماً مفعّل — فعّل طبقات إضافية حسب الحاجة")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("✅ **File ID** — تطابق مباشر (Forward)")
+        compute_md5 = st.checkbox("🔐 MD5 — تطابق المحتوى البايتي",
+                                  help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
+    with col_b:
+        compute_phash = st.checkbox("🖼️ pHash — تشابه بصري للصور",
+                                    value=False,  # ❗ غير مفعل افتراضياً
+                                    disabled=not _HAS_IMAGEHASH,
+                                    help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
+
+    st.markdown("---")
+    st.subheader("🎬 Exact Video Matching (دقة عالية جداً)")
+
+    use_exact_video = st.toggle("تفعيل Exact Video Matching", value=False,
+                                help="تطابق صارم مع هامش صغير جداً للمدة والحجم (الأبعاد يجب أن تتطابق تماماً).")
+
+    duration_tolerance = 0.01
+    size_tolerance_percent = 0.5
+
+    if use_exact_video:
+        st.markdown("""
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
+                    padding:10px 14px;margin-bottom:12px;font-size:0.84rem;color:#166534;">
+        ✅ <b>دقة متناهية:</b> الإعدادات الافتراضية (0.01 ثانية و 0.5% حجم) تمنع تقريباً كل الإيجابيات الكاذبة.
         </div>
-        <div class="status-dot"></div>
-      </div>
-      <button class="logout-btn" onclick="goTo('login')">🚪 تسجيل الخروج</button>
-    </div>
-  </aside>
+        """, unsafe_allow_html=True)
 
-  <!-- ─── MAIN ─────────────────────────────── -->
-  <div class="main">
+        st.markdown("**📏 هامش المدة (بالثواني)**")
+        duration_tolerance = st.radio(
+            "اختر مستوى الدقة للمدة:",
+            options=[0.001, 0.01, 0.05, 0.1],
+            index=1,  # افتراضي 0.01
+            format_func=lambda x: (
+                f"{x} ثانية - دقة قصوى (شبه تام)" if x == 0.001 else
+                f"{x} ثانية - دقة عالية (موصى به)" if x == 0.01 else
+                f"{x} ثانية - دقة متوسطة" if x == 0.05 else
+                f"{x} ثانية - دقة منخفضة (قد يلتقط مكررات أكثر)"
+            ),
+            help="الفرق المسموح به في المدة بين الفيديوهين ليتم اعتبارهما مكررين."
+        )
 
-    <!-- TOPBAR -->
-    <div class="topbar">
+        st.markdown("**📦 هامش الحجم (%)**")
+        size_tolerance_percent = st.radio(
+            "اختر النسبة المئوية للفرق المسموح به في حجم الملف:",
+            options=[0.0, 0.01, 0.1, 0.25, 0.5, 1.0],
+            index=4,  # افتراضي 0.5
+            format_func=lambda x: (
+                f"{x}% - تطابق تام (byte-perfect)" if x == 0.0 else
+                f"{x}% - شبه تام (metadata فقط)" if x == 0.01 else
+                f"{x}% - شبه تام" if x == 0.1 else
+                f"{x}% - دقيق جداً" if x == 0.25 else
+                f"{x}% - دقة عالية (موصى به)" if x == 0.5 else
+                f"{x}% - دقة متوسطة (قد يلتقط مكررات أكثر)"
+            ),
+            help="القيمة 0.01% تكتشف نفس الملف حتى مع اختلافات metadata الضئيلة جداً."
+        )
+
+    st.markdown("---")
+    uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
+    if uploaded_db:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        tmp.write(uploaded_db.getbuffer())
+        st.session_state.db_path = tmp.name
+        st.success("✅ تم تحميل قاعدة البيانات")
+
+    if st.button("🚀 بدء المسح", use_container_width=True, type="primary"):
+        if not channel_input:
+            st.error("الرجاء اختيار قناة أو إدخال رابط")
+        else:
+            try:
+                if isinstance(channel_input, str):
+                    entity = run_sync(_get_entity(st.session_state.client, channel_input.strip()))
+                else:
+                    entity = channel_input
+                st.session_state.channel     = entity
+                st.session_state.scan_params = {
+                    'media_types': media_types,
+                    'keep_strategy': keep_map[keep_strategy],
+                    'min_size_mb': min_size_mb,
+                    'compute_md5': compute_md5,
+                    'compute_phash': compute_phash,
+                    'use_exact_video': use_exact_video,
+                    'duration_tolerance': duration_tolerance,
+                    'size_tolerance_percent': size_tolerance_percent,
+                }
+                st.session_state.auto_mode = auto_mode
+                if st.session_state.db_path is None:
+                    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+                    st.session_state.db_path = tmp.name
+                db = Database(st.session_state.db_path)
+                _, total_scanned, files_saved = db.get_resume_state(entity.id)
+                st.session_state.total_scanned = total_scanned
+                st.session_state.files_saved   = files_saved
+                db.close()
+                st.session_state.auto_scan_running = auto_mode
+                st.session_state.step = 'scanning'
+                st.rerun()
+            except Exception as e:
+                st.error(f"خطأ: {e}")
+
+# ---------- المسح ----------
+elif st.session_state.step == 'scanning':
+    params  = st.session_state.scan_params
+    channel = st.session_state.channel
+
+    channel_title = getattr(channel, 'title', str(channel.id))
+    st.html(f"""
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <span style="font-size:1.4rem;">📡</span>
       <div>
-        <div class="topbar-title" id="topbar-title">تسجيل الدخول</div>
-        <div class="topbar-sub" id="topbar-sub">أدخل بيانات حسابك للمتابعة</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span class="badge badge-blue">v5.0</span>
+        <div style="font-size:1.1rem;font-weight:700;color:#1e1b4b;">مسح القناة</div>
+        <div style="font-size:0.82rem;color:#6366f1;font-weight:600;">{channel_title}</div>
       </div>
     </div>
+    """)
 
-    <!-- CONTENT -->
-    <div class="content">
+    col1, col2, col3 = st.columns(3)
+    with col1: st.metric("📊 تم فحص", st.session_state.total_scanned)
+    with col2: st.metric("💾 تم حفظ", st.session_state.files_saved)
+    with col3: st.metric("⚡ السرعة", f"{st.session_state.scan_speed:.1f} msg/s")
 
-      <!-- ═══════════════════════════════════ LOGIN ═══ -->
-      <div class="screen active" id="screen-login">
+    should_scan = st.session_state.auto_scan_running
 
-        <div class="card" style="max-width:460px;margin:0 auto;">
-          <div class="tabs-bar">
-            <button class="tab-btn active" onclick="switchTab('phone')">📱 رقم الهاتف</button>
-            <button class="tab-btn" onclick="switchTab('session')">🔑 Session String</button>
-          </div>
+    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
+    with col_btn1:
+        if not st.session_state.auto_scan_running:
+            if st.button("▶️ فحص الدفعة التالية", type="primary", use_container_width=True):
+                should_scan = True
+        else:
+            if st.button("⏹️ إيقاف الوضع الآلي", type="primary", use_container_width=True):
+                st.session_state.auto_scan_running = False; st.rerun()
+    with col_btn2:
+        if st.button("📋 عرض المكررات", use_container_width=True):
+            st.session_state.step = 'results'; st.rerun()
+    with col_btn3:
+        with open(st.session_state.db_path, "rb") as f:
+            st.download_button("📥 تحميل DB", f, file_name=f"scan_{channel.id}.db", use_container_width=True)
+    with col_btn4:
+        if st.button("🔄 فحص من البداية", use_container_width=True):
+            st.session_state._confirm_rescan = True; st.rerun()
 
-          <!-- Phone -->
-          <div class="tab-pane active" id="pane-phone">
-            <div class="alert alert-info">
-              <span class="alert-icon">ℹ️</span>
-              <span class="alert-text">احصل على API ID وAPI Hash من <strong>my.telegram.org</strong> → API Development Tools</span>
-            </div>
-            <div class="field">
-              <label class="label">API ID</label>
-              <div class="input-wrap">
-                <input type="password" class="has-eye" id="p-api-id" placeholder="مثال: 12345678">
-                <button class="eye-btn" onclick="toggleEye('p-api-id',this)">👁</button>
-              </div>
-            </div>
-            <div class="field">
-              <label class="label">API Hash</label>
-              <div class="input-wrap">
-                <input type="password" class="has-eye" id="p-api-hash" placeholder="32 حرف هيكس">
-                <button class="eye-btn" onclick="toggleEye('p-api-hash',this)">👁</button>
-              </div>
-            </div>
-            <div class="field">
-              <label class="label">رقم الهاتف</label>
-              <input type="tel" id="p-phone" placeholder="+963xxxxxxxxx" dir="ltr">
-              <div class="hint">بصيغة دولية مع رمز البلد</div>
-            </div>
-            <button class="btn btn-primary btn-full" onclick="doLogin()">إرسال رمز التحقق ←</button>
-          </div>
+    if st.session_state.get('_confirm_rescan'):
+        st.warning("⚠️ سيتم مسح كل بيانات هذه القناة والبدء من الصفر. هل أنت متأكد؟")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ نعم، ابدأ من الصفر", type="primary", use_container_width=True):
+                db_reset = Database(st.session_state.db_path)
+                db_reset.clear_channel(channel.id)
+                db_reset.close()
+                st.session_state.total_scanned     = 0
+                st.session_state.files_saved        = 0
+                st.session_state.scan_speed         = 0.0
+                st.session_state.selected_ids       = set()
+                st.session_state.auto_scan_running  = False
+                st.session_state._confirm_rescan    = False
+                st.rerun()
+        with c2:
+            if st.button("❌ إلغاء", use_container_width=True):
+                st.session_state._confirm_rescan = False; st.rerun()
 
-          <!-- Session -->
-          <div class="tab-pane" id="pane-session">
-            <div class="alert alert-info">
-              <span class="alert-icon">💡</span>
-              <span class="alert-text">ادخل Session String محفوظة مسبقاً للدخول مباشرة بدون رمز SMS</span>
-            </div>
-            <div class="field">
-              <label class="label">API ID</label>
-              <div class="input-wrap">
-                <input type="password" class="has-eye" id="s-api-id" placeholder="مثال: 12345678">
-                <button class="eye-btn" onclick="toggleEye('s-api-id',this)">👁</button>
-              </div>
-            </div>
-            <div class="field">
-              <label class="label">API Hash</label>
-              <div class="input-wrap">
-                <input type="password" class="has-eye" id="s-api-hash" placeholder="32 حرف هيكس">
-                <button class="eye-btn" onclick="toggleEye('s-api-hash',this)">👁</button>
-              </div>
-            </div>
-            <div class="field">
-              <label class="label">Session String</label>
-              <textarea id="s-session" placeholder="1BVtsOKABCDEFGH..."></textarea>
-            </div>
-            <button class="btn btn-primary btn-full" onclick="doSessionLogin()">دخول مباشر ←</button>
-          </div>
+    if should_scan:
+        db = Database(st.session_state.db_path)
+        last_id, _, _ = db.get_resume_state(channel.id)
+        offset_id  = 0 if last_id == 0 else last_id + 1
+        client     = st.session_state.client
+        progress   = st.progress(0, text="جاري الفحص...")
+        start_time = time.time()
+        try:
+            messages = run_sync(_get_messages(client, channel, offset_id, BATCH_SCAN_SIZE))
+            elapsed  = time.time() - start_time
+            if messages:
+                st.session_state.scan_speed = len(messages) / elapsed if elapsed > 0 else 0
 
-          <div class="help-grid">
-            <div class="help-card">
-              <div class="help-card-icon">🔧</div>
-              <div class="help-card-title">كيف أحصل على API؟</div>
-              <div class="help-card-sub">my.telegram.org</div>
-            </div>
-            <div class="help-card">
-              <div class="help-card-icon">💾</div>
-              <div class="help-card-title">ما هو Session String؟</div>
-              <div class="help-card-sub">دخول آمن بدون SMS</div>
-            </div>
-          </div>
-        </div>
+            if not messages:
+                st.success("✅ تم الانتهاء من فحص كل الرسائل!")
+                st.session_state.auto_scan_running = False
+            else:
+                scanned = saved = 0
+                cur_last = offset_id
+                for i, msg in enumerate(messages):
+                    if not msg: continue
+                    scanned  += 1
+                    cur_last  = msg.id
+                    progress.progress((i + 1) / max(len(messages), 1), text=f"فحص رسالة {msg.id}...")
+                    if not msg.media: continue
+                    info = run_sync(extract_file_info_async(
+                        client, msg, params['compute_md5'], params['compute_phash']
+                    ))
+                    if not info: continue
+                    if info['type'] not in params['media_types']: continue
+                    if info['size'] < params['min_size_mb'] * 1024 * 1024: continue
+                    saved += 1
+                    db.buffer_insert((
+                        channel.id, info['id'], info['file_id'], info['size'],
+                        info['duration'], info['width'], info['height'],
+                        info['md5'], info['phash'], info['date'],
+                        info['type'], info['mime'], info['views'], info['name']
+                    ))
+                st.session_state.total_scanned += scanned
+                st.session_state.files_saved   += saved
+                db.save_progress(channel.id, cur_last, st.session_state.total_scanned, st.session_state.files_saved)
+                progress.progress(1.0, text="✅ اكتملت الدفعة")
+                st.info(f"دفعة: فحص {scanned} رسالة، حُفظ {saved} ملف")
 
-        <div class="footer">TeleSweep v5.0 · صُنع بعناية بواسطة <strong style="color:var(--accent2)">F.ALSALEH</strong></div>
+                if st.session_state.auto_scan_running and scanned == BATCH_SCAN_SIZE:
+                    time.sleep(0.5); st.rerun()
+                elif st.session_state.auto_scan_running:
+                    st.success("✅ الوضع الآلي: تم الانتهاء من كل الرسائل!")
+                    st.session_state.auto_scan_running = False
+        except FloodWaitError as e:
+            st.warning(f"⏳ انتظار {e.seconds} ثانية بسبب FloodWait")
+            st.session_state.auto_scan_running = False
+        except Exception as e:
+            st.error(f"خطأ: {e}")
+            st.session_state.auto_scan_running = False
+        finally:
+            db.close()
+
+# ---------- النتائج ----------
+elif st.session_state.step == 'results':
+    params  = st.session_state.scan_params
+    channel = st.session_state.channel
+    db      = Database(st.session_state.db_path)
+
+    duplicates = db.stream_duplicates(
+        channel.id,
+        params['keep_strategy'],
+        int(params['min_size_mb'] * 1024 * 1024),
+        use_md5=params.get('compute_md5', False),
+        use_phash=params.get('compute_phash', False),
+        use_exact_video=params.get('use_exact_video', False),
+        duration_tolerance=params.get('duration_tolerance', 0.01),
+        size_tolerance_percent=params.get('size_tolerance_percent', 0.5),
+    )
+
+    channel_title = getattr(channel, 'title', str(channel.id))
+    st.html(f"""
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+      <span style="font-size:1.4rem;">📋</span>
+      <div>
+        <div style="font-size:1.1rem;font-weight:700;color:#1e1b4b;">نتائج الفحص</div>
+        <div style="font-size:0.82rem;color:#6366f1;font-weight:600;">{channel_title}</div>
       </div>
-
-      <!-- ═══════════════════════════════════ OTP ═══ -->
-      <div class="screen" id="screen-otp">
-        <div class="card" style="max-width:420px;margin:0 auto;">
-          <div style="text-align:center;margin-bottom:20px;">
-            <div style="font-size:36px;margin-bottom:10px;">📲</div>
-            <div style="font-size:16px;font-weight:600;color:var(--text)">تأكيد الحساب</div>
-            <div style="font-size:12px;color:var(--text2);margin-top:4px;">أدخل الرمز الذي وصلك على تيليجرام</div>
-          </div>
-          <div class="field">
-            <label class="label">رمز OTP</label>
-            <input type="text" id="otp-code" placeholder="12345" style="font-family:var(--mono);font-size:20px;letter-spacing:0.2em;text-align:center;" maxlength="6">
-          </div>
-          <div class="field">
-            <label class="label">كلمة مرور 2FA (إن وجدت)</label>
-            <div class="input-wrap">
-              <input type="password" class="has-eye" id="otp-pass" placeholder="اختياري">
-              <button class="eye-btn" onclick="toggleEye('otp-pass',this)">👁</button>
-            </div>
-          </div>
-          <button class="btn btn-primary btn-full" onclick="doVerify()">تأكيد ←</button>
-          <button class="btn btn-secondary btn-full" style="margin-top:8px;" onclick="goTo('login')">⬅ إعادة الإرسال</button>
-        </div>
-      </div>
-
-      <!-- ═══════════════════════════════════ CHANNEL ═══ -->
-      <div class="screen" id="screen-channel">
-        <div class="grid-2">
-
-          <!-- Left: Channel select -->
-          <div>
-            <div class="card">
-              <div class="card-title">اختيار القناة</div>
-              <button class="btn btn-secondary" style="margin-bottom:12px;width:100%;" onclick="fetchChannels()">📋 جلب قنواتي ومجموعاتي</button>
-
-              <div class="scroll-inner" id="channel-list">
-                <!-- Demo channels -->
-                <div class="channel-list">
-                  <div class="channel-item selected" onclick="selectChannel(this)">
-                    <div class="channel-item-icon">📢</div>
-                    <div>
-                      <div class="channel-item-name">قناة الملفات</div>
-                      <div class="channel-item-type">قناة · 1,240 عضو</div>
-                    </div>
-                  </div>
-                  <div class="channel-item" onclick="selectChannel(this)">
-                    <div class="channel-item-icon">👥</div>
-                    <div>
-                      <div class="channel-item-name">مجموعة المشاريع</div>
-                      <div class="channel-item-type">مجموعة · 87 عضو</div>
-                    </div>
-                  </div>
-                  <div class="channel-item" onclick="selectChannel(this)">
-                    <div class="channel-item-icon">📁</div>
-                    <div>
-                      <div class="channel-item-name">أرشيف الوسائط</div>
-                      <div class="channel-item-type">قناة · 540 عضو</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div style="margin-top:12px;">
-                <label class="label">أو أدخل رابطاً يدوياً</label>
-                <input type="text" placeholder="@username أو https://t.me/+xxx">
-              </div>
-            </div>
-          </div>
-
-          <!-- Right: Scan settings -->
-          <div>
-            <div class="card">
-              <div class="card-title">إعدادات الفحص</div>
-
-              <div class="field">
-                <label class="label">أنواع الملفات</label>
-                <div class="pill-group">
-                  <div class="pill active" onclick="this.classList.toggle('active')">🖼️ صور</div>
-                  <div class="pill active" onclick="this.classList.toggle('active')">🎬 فيديو</div>
-                  <div class="pill" onclick="this.classList.toggle('active')">📄 مستندات</div>
-                </div>
-              </div>
-
-              <div class="field">
-                <label class="label">الاحتفاظ بـ</label>
-                <select>
-                  <option>الأقدم (Oldest)</option>
-                  <option>الأحدث (Newest)</option>
-                  <option>الأكبر (Largest)</option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label class="label">الحد الأدنى للحجم (MB)</label>
-                <input type="number" value="0" min="0" placeholder="0">
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="card-title">طبقات الاكتشاف</div>
-
-              <div class="toggle-row">
-                <div class="toggle-info">
-                  <div class="toggle-title">🔗 File ID <span class="badge badge-green" style="font-size:9px;">دائماً</span></div>
-                  <div class="toggle-sub">تطابق مباشر — Forward آمن 100%</div>
-                </div>
-                <div class="toggle on" style="opacity:0.5;cursor:not-allowed;"></div>
-              </div>
-
-              <div class="toggle-row">
-                <div class="toggle-info">
-                  <div class="toggle-title">🔐 MD5</div>
-                  <div class="toggle-sub">تطابق بايتي كامل للملفات الصغيرة</div>
-                </div>
-                <div class="toggle" onclick="this.classList.toggle('on')"></div>
-              </div>
-
-              <div class="toggle-row">
-                <div class="toggle-info">
-                  <div class="toggle-title">🖼️ pHash</div>
-                  <div class="toggle-sub">تشابه بصري للصور</div>
-                </div>
-                <div class="toggle" onclick="this.classList.toggle('on')"></div>
-              </div>
-
-              <div class="toggle-row">
-                <div class="toggle-info">
-                  <div class="toggle-title">🎬 Exact Video</div>
-                  <div class="toggle-sub">تطابق دقيق بالمدة والحجم والأبعاد</div>
-                </div>
-                <div class="toggle" onclick="this.classList.toggle('on')"></div>
-              </div>
-            </div>
-
-            <button class="btn btn-primary btn-full" onclick="goTo('scan')">🚀 بدء المسح ←</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- ═══════════════════════════════════ SCAN ═══ -->
-      <div class="screen" id="screen-scan">
-
-        <div class="channel-chip">
-          <div class="channel-avatar">📢</div>
-          <div>
-            <div style="font-size:13px;font-weight:500;color:var(--text);">قناة الملفات</div>
-            <div style="font-size:11px;color:var(--text3);">يجري الفحص...</div>
-          </div>
-          <div style="margin-right:auto;display:flex;align-items:center;gap:6px;">
-            <div class="scan-pulse"></div>
-            <span style="font-size:11px;color:var(--accent2);">نشط</span>
-          </div>
-        </div>
-
-        <div class="metrics">
-          <div class="metric">
-            <div class="metric-label">تم فحص</div>
-            <div class="metric-value" id="m-scanned">2,450</div>
-            <div class="metric-sub">رسالة</div>
-          </div>
-          <div class="metric">
-            <div class="metric-label">تم حفظ</div>
-            <div class="metric-value" id="m-saved">847</div>
-            <div class="metric-sub">ملف</div>
-          </div>
-          <div class="metric">
-            <div class="metric-label">السرعة</div>
-            <div class="metric-value" id="m-speed">12.3</div>
-            <div class="metric-sub">msg/s</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <span style="font-size:12px;color:var(--text2);">تقدم الفحص</span>
-            <span style="font-size:12px;font-family:var(--mono);color:var(--accent2);" id="scan-pct">48%</span>
-          </div>
-          <div class="progress-bar"><div class="progress-fill" id="scan-bar" style="width:48%"></div></div>
-          <div style="font-size:11px;color:var(--text3);margin-top:6px;" id="scan-status">فحص رسالة #8,340 ...</div>
-        </div>
-
-        <div class="action-bar">
-          <button class="btn btn-primary" id="scan-btn" onclick="toggleScan()">⏸ إيقاف الوضع الآلي</button>
-          <button class="btn btn-secondary" onclick="goTo('results')">📋 عرض النتائج</button>
-          <button class="btn btn-secondary">📥 تحميل DB</button>
-          <button class="btn btn-danger" onclick="confirmReset()">🔄 من البداية</button>
-        </div>
-
-        <div class="alert alert-warn" id="reset-confirm" style="display:none;">
-          <span class="alert-icon">⚠️</span>
-          <div class="alert-text">
-            سيتم مسح كل بيانات هذه القناة والبدء من الصفر. هل أنت متأكد؟
-            <div style="margin-top:8px;display:flex;gap:8px;">
-              <button class="btn btn-danger" style="padding:6px 14px;font-size:12px;">✅ نعم، ابدأ</button>
-              <button class="btn btn-secondary" style="padding:6px 14px;font-size:12px;" onclick="document.getElementById('reset-confirm').style.display='none'">❌ إلغاء</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">سجل الفحص</div>
-          <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-family:var(--mono);color:var(--text2);">
-            <div>[12:04:18] ✅ دفعة 50 رسالة · حُفظ 18 ملف</div>
-            <div>[12:04:06] ✅ دفعة 50 رسالة · حُفظ 21 ملف</div>
-            <div>[12:03:54] ✅ دفعة 50 رسالة · حُفظ 15 ملف</div>
-            <div>[12:03:42] ✅ دفعة 50 رسالة · حُفظ 24 ملف</div>
-            <div style="color:var(--text3)">[12:03:30] ▶ بدء الفحص من رسالة #0</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ═══════════════════════════════════ RESULTS ═══ -->
-      <div class="screen" id="screen-results">
-
-        <div class="alert alert-warn">
-          <span class="alert-icon">⚠️</span>
-          <div class="alert-text">
-            <strong>127 ملف مكرر</strong> بحاجة للمراجعة ·
-            <span class="badge badge-green">🔗 Forward: 84</span>
-            <span class="badge badge-blue" style="margin:0 4px;">🔐 MD5: 31</span>
-            <span class="badge badge-purple">🎬 Video: 12</span>
-          </div>
-        </div>
-
-        <div class="grid-2">
-          <div>
-            <div class="action-bar" style="margin-bottom:12px;">
-              <button class="btn btn-secondary" style="font-size:12px;" onclick="selectAll()">✅ تحديد الكل</button>
-              <button class="btn btn-secondary" style="font-size:12px;" onclick="deselectAll()">✖ إلغاء الكل</button>
-              <button class="btn btn-secondary" style="font-size:12px;">📥 CSV</button>
-            </div>
-
-            <div class="section-head">
-              <h3>🔗 File ID Match</h3><div class="section-line"></div>
-              <span class="badge badge-green">84</span>
-            </div>
-
-            <div class="dup-list" id="dup-list">
-              <!-- Dup cards injected by JS -->
-            </div>
-
-            <div style="margin-top:12px;display:flex;gap:6px;align-items:center;justify-content:center;">
-              <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px;">⬅ السابقة</button>
-              <span style="font-size:12px;color:var(--text2);">صفحة 1 من 3</span>
-              <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px;">التالية ➡</button>
-            </div>
-          </div>
-
-          <div>
-            <div class="card" style="position:sticky;top:0;">
-              <div class="card-title">ملخص الحذف</div>
-              <div class="metrics" style="grid-template-columns:1fr 1fr;">
-                <div class="metric">
-                  <div class="metric-label">محدد</div>
-                  <div class="metric-value" id="sel-count">0</div>
-                </div>
-                <div class="metric">
-                  <div class="metric-label">حجم التوفير</div>
-                  <div class="metric-value" id="sel-size">0 MB</div>
-                </div>
-              </div>
-
-              <div style="margin-top:8px;">
-                <button class="btn btn-danger btn-full" id="del-btn" onclick="deleteSelected()" disabled>
-                  🗑️ حذف المحددات
-                </button>
-              </div>
-
-              <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
-                <div class="card-title">توزيع أنواع التكرار</div>
-                <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
-                  <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="color:var(--text2)">🔗 File ID</span>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                      <div style="width:80px;height:4px;background:var(--bg4);border-radius:99px;overflow:hidden;">
-                        <div style="width:66%;height:100%;background:var(--success);border-radius:99px;"></div>
-                      </div>
-                      <span class="badge badge-green">84</span>
-                    </div>
-                  </div>
-                  <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="color:var(--text2)">🔐 MD5</span>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                      <div style="width:80px;height:4px;background:var(--bg4);border-radius:99px;overflow:hidden;">
-                        <div style="width:24%;height:100%;background:var(--accent2);border-radius:99px;"></div>
-                      </div>
-                      <span class="badge badge-blue">31</span>
-                    </div>
-                  </div>
-                  <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="color:var(--text2)">🎬 Exact Video</span>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                      <div style="width:80px;height:4px;background:var(--bg4);border-radius:99px;overflow:hidden;">
-                        <div style="width:10%;height:100%;background:var(--accent3);border-radius:99px;"></div>
-                      </div>
-                      <span class="badge badge-purple">12</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-    </div><!-- /content -->
-  </div><!-- /main -->
-</div><!-- /app -->
-
-<script>
-// ─── NAV ───────────────────────────────────────────
-const screens = ['login','otp','channel','scan','results'];
-const topbarInfo = {
-  login:   ['تسجيل الدخول','أدخل بيانات حسابك للمتابعة'],
-  otp:     ['تأكيد الهوية','أدخل رمز التحقق من تيليجرام'],
-  channel: ['اختيار القناة','حدد القناة وإعدادات الفحص'],
-  scan:    ['فحص القناة','يجري البحث عن الملفات المكررة'],
-  results: ['نتائج الفحص','راجع المكررات واحذف ما تريد'],
-};
-
-function goTo(page) {
-  screens.forEach(s => {
-    document.getElementById('screen-'+s)?.classList.remove('active');
-    document.getElementById('nav-'+s)?.classList.remove('active');
-  });
-  const el = document.getElementById('screen-'+page);
-  if (!el) return;
-  el.classList.add('active');
-  const nav = document.getElementById('nav-'+page);
-  if (nav) nav.classList.add('active');
-
-  const info = topbarInfo[page] || ['TeleSweep',''];
-  document.getElementById('topbar-title').textContent = info[0];
-  document.getElementById('topbar-sub').textContent = info[1];
-}
-
-// ─── LOGIN ──────────────────────────────────────────
-function switchTab(t) {
-  document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    b.classList.toggle('active', (t==='phone'&&i===0)||(t==='session'&&i===1));
-  });
-  document.getElementById('pane-phone').classList.toggle('active', t==='phone');
-  document.getElementById('pane-session').classList.toggle('active', t==='session');
-}
-
-function toggleEye(id, btn) {
-  const el = document.getElementById(id);
-  el.type = el.type === 'password' ? 'text' : 'password';
-  btn.textContent = el.type === 'password' ? '👁' : '🙈';
-}
-
-function doLogin() {
-  const id = document.getElementById('p-api-id').value.trim();
-  const hash = document.getElementById('p-api-hash').value.trim();
-  const phone = document.getElementById('p-phone').value.trim();
-  if (!id || !hash || !phone) { alert('الرجاء تعبئة جميع الحقول'); return; }
-  goTo('otp');
-}
-
-function doSessionLogin() {
-  const id = document.getElementById('s-api-id').value.trim();
-  const hash = document.getElementById('s-api-hash').value.trim();
-  const sess = document.getElementById('s-session').value.trim();
-  if (!id || !hash || !sess) { alert('الرجاء تعبئة جميع الحقول'); return; }
-  document.getElementById('user-chip').style.display = 'flex';
-  document.getElementById('user-name').textContent = 'مستخدم تيليجرام';
-  document.getElementById('user-avatar').textContent = 'م';
-  goTo('channel');
-}
-
-function doVerify() {
-  const code = document.getElementById('otp-code').value.trim();
-  if (!code) { alert('أدخل رمز OTP'); return; }
-  document.getElementById('user-chip').style.display = 'flex';
-  document.getElementById('user-name').textContent = 'مستخدم تيليجرام';
-  document.getElementById('user-avatar').textContent = 'م';
-  goTo('channel');
-}
-
-// ─── CHANNEL ──────────────────────────────────────────
-function selectChannel(el) {
-  document.querySelectorAll('.channel-item').forEach(c => c.classList.remove('selected'));
-  el.classList.add('selected');
-}
-
-function fetchChannels() {
-  // demo
-}
-
-// ─── SCAN ──────────────────────────────────────────
-let scanning = true;
-let scanPct = 48;
-let scanInterval;
-
-function toggleScan() {
-  scanning = !scanning;
-  const btn = document.getElementById('scan-btn');
-  if (scanning) {
-    btn.textContent = '⏸ إيقاف الوضع الآلي';
-    startScanAnimation();
-  } else {
-    btn.textContent = '▶ متابعة الفحص';
-    clearInterval(scanInterval);
-  }
-}
-
-function startScanAnimation() {
-  clearInterval(scanInterval);
-  scanInterval = setInterval(() => {
-    if (!scanning) return;
-    scanPct = Math.min(100, scanPct + Math.random() * 2);
-    document.getElementById('scan-bar').style.width = scanPct + '%';
-    document.getElementById('scan-pct').textContent = Math.round(scanPct) + '%';
-    const msgId = 8000 + Math.round(scanPct * 50);
-    document.getElementById('scan-status').textContent = `فحص رسالة #${msgId.toLocaleString('ar')} ...`;
-    document.getElementById('m-scanned').textContent = (2000 + Math.round(scanPct * 10)).toLocaleString('ar');
-    if (scanPct >= 100) { clearInterval(scanInterval); document.getElementById('scan-status').textContent = '✅ اكتمل الفحص!'; }
-  }, 400);
-}
-
-function confirmReset() {
-  document.getElementById('reset-confirm').style.display = 'flex';
-}
-
-// ─── RESULTS ──────────────────────────────────────────
-const dummyDups = [
-  { name: 'project-demo.mp4', size: '124 MB', dur: '3:42', type: '🎬', tag: 'file_id', tagLabel: '🔗 Forward', tagClass: 'badge-green' },
-  { name: 'DSC_0042.jpg', size: '8.4 MB', dur: '', type: '🖼️', tag: 'md5', tagLabel: '🔐 MD5', tagClass: 'badge-blue' },
-  { name: 'tutorial_final.mp4', size: '340 MB', dur: '18:22', type: '🎬', tag: 'exact_video', tagLabel: '🎬 Exact', tagClass: 'badge-purple' },
-  { name: 'report-q3.pdf', size: '2.1 MB', dur: '', type: '📄', tag: 'file_id', tagLabel: '🔗 Forward', tagClass: 'badge-green' },
-  { name: 'photo_2024.jpg', size: '5.7 MB', dur: '', type: '🖼️', tag: 'phash', tagLabel: '🖼️ pHash', tagClass: 'badge-amber' },
-  { name: 'backup_2024.zip', size: '890 MB', dur: '', type: '📦', tag: 'md5', tagLabel: '🔐 MD5', tagClass: 'badge-blue' },
-];
-
-let selected = new Set();
-
-function buildDupList() {
-  const container = document.getElementById('dup-list');
-  container.innerHTML = dummyDups.map((d, i) => `
-    <div class="dup-card" id="dup-${i}" onclick="toggleDup(${i})">
-      <div class="dup-icon">${d.type}</div>
-      <div class="dup-body">
-        <div class="dup-name">${d.name}</div>
-        <div class="dup-meta">${d.size}${d.dur ? ' · ' + d.dur : ''} · أصل: #${1000+i}</div>
-      </div>
-      <span class="badge ${d.tagClass}">${d.tagLabel}</span>
-      <div class="dup-check" id="check-${i}"></div>
     </div>
-  `).join('');
-}
+    """)
 
-function toggleDup(i) {
-  const card = document.getElementById('dup-'+i);
-  const check = document.getElementById('check-'+i);
-  if (selected.has(i)) {
-    selected.delete(i);
-    card.classList.remove('selected');
-    check.textContent = '';
-  } else {
-    selected.add(i);
-    card.classList.add('selected');
-    check.textContent = '✓';
-  }
-  updateSelCount();
-}
+    if st.session_state.last_deleted_count > 0:
+        st.success(f"✅ تم حذف {st.session_state.last_deleted_count} رسالة بنجاح من تيليجرام وقاعدة البيانات")
+        if st.session_state.last_deleted_failed > 0:
+            st.warning(f"⚠️ فشل حذف {st.session_state.last_deleted_failed} رسالة")
+        st.session_state.last_deleted_count  = 0
+        st.session_state.last_deleted_failed = 0
 
-function selectAll() {
-  dummyDups.forEach((_, i) => {
-    selected.add(i);
-    document.getElementById('dup-'+i)?.classList.add('selected');
-    const ch = document.getElementById('check-'+i);
-    if (ch) ch.textContent = '✓';
-  });
-  updateSelCount();
-}
+    if not duplicates:
+        st.success("🎉 لا توجد مكررات!")
+    else:
+        type_counts = {}
+        for d in duplicates:
+            mt = d.get('match_type', 'file_id')
+            type_counts[mt] = type_counts.get(mt, 0) + 1
 
-function deselectAll() {
-  selected.clear();
-  dummyDups.forEach((_, i) => {
-    document.getElementById('dup-'+i)?.classList.remove('selected');
-    const ch = document.getElementById('check-'+i);
-    if (ch) ch.textContent = '';
-  });
-  updateSelCount();
-}
+        badge_map = {
+            "file_id":     "🔗 File ID",
+            "md5":         "🔐 MD5",
+            "phash":       "🖼️ pHash",
+            "exact_video": "🎬 Exact Video",
+        }
+        summary_parts = " · ".join(
+            f"<span style='color:#4338ca;font-weight:700;'>{badge_map.get(k,k)}</span>: {v}"
+            for k, v in type_counts.items()
+        )
 
-function updateSelCount() {
-  document.getElementById('sel-count').textContent = selected.size;
-  const totalMb = [...selected].reduce((s,i) => s + parseFloat(dummyDups[i].size) || 0, 0);
-  document.getElementById('sel-size').textContent = totalMb.toFixed(0) + ' MB';
-  document.getElementById('del-btn').disabled = selected.size === 0;
-}
+        st.html(f"""
+        <div class="ts-alert-warn">
+          <span style="font-size:1.4rem;">⚠️</span>
+          <div>
+            <div style="font-weight:700;color:#92400e;font-size:0.95rem;">
+              {len(duplicates)} ملف مكرر بحاجة للمراجعة
+            </div>
+            <div style="font-size:0.78rem;color:#b45309;margin-top:2px;">{summary_parts}</div>
+          </div>
+        </div>
+        """)
 
-function deleteSelected() {
-  if (!selected.size) return;
-  if (!confirm(`حذف ${selected.size} ملف؟ لا يمكن التراجع.`)) return;
-  selected.forEach(i => document.getElementById('dup-'+i)?.remove());
-  selected.clear();
-  updateSelCount();
-}
+        page        = st.session_state.page
+        total_pages = max(1, (len(duplicates) + PAGE_SIZE - 1) // PAGE_SIZE)
+        page_dups   = duplicates[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
-// ─── INIT ──────────────────────────────────────────
-buildDupList();
-startScanAnimation();
-</script>
-</body>
-</html>
+        # ── Card view للمكررات ──
+        type_icon = {"video": "🎬", "photo": "🖼️", "image": "🖼️", "document": "📄"}
+        badge_cls = {"file_id": "badge-fileid", "md5": "badge-md5", "phash": "badge-phash", "exact_video": "badge-exact"}
+        badge_lbl = {"file_id": "🔗 Forward", "md5": "🔐 MD5", "phash": "🖼️ pHash", "exact_video": "🎬 Exact"}
+
+        cards_html = ""
+        for d in page_dups:
+            icon  = type_icon.get(d['type'], "📁")
+            bc    = badge_cls.get(d.get('match_type','file_id'), 'badge-fileid')
+            bl    = badge_lbl.get(d.get('match_type','file_id'), '🔗')
+            name  = (d.get('name') or f"رسالة #{d['id']}")
+            if len(name) > 35: name = name[:35] + "…"
+            dur   = f" · {d['duration']}ث" if d.get('duration') else ""
+            cards_html += f"""
+            <div class="dup-card" id="card-{d['id']}">
+              <div class="dup-card-icon">{icon}</div>
+              <div class="dup-card-body">
+                <div class="dup-card-name">{name}</div>
+                <div class="dup-card-meta">{fmt_size(d['size'])}{dur} · {d['date'][:10]} · أصل: #{d['keeper_id']}</div>
+              </div>
+              <span class="dup-badge {bc}">{bl}</span>
+            </div>"""
+        st.html(cards_html)
+
+        # ── Editable table للتحديد ──
+        badge_short = {"file_id": "🔗 Forward", "md5": "🔐 MD5", "phash": "🖼️ pHash", "exact_video": "🎬 Exact"}
+        df = pd.DataFrame([
+            {
+                "معرف": d['id'],
+                "النوع": d['type'],
+                "الحجم": fmt_size(d['size']),
+                "المدة (ث)": d['duration'] if d['duration'] else "—",
+                "التاريخ": d['date'][:10],
+                "سبب التكرار": badge_short.get(d.get('match_type', 'file_id'), '🔗'),
+                "الأصل": d['keeper_id'],
+                "تحديد": False
+            }
+            for d in page_dups
+        ])
+
+        editor_key = f"editor_{channel.id}_{st.session_state.page}"
+        edited = st.data_editor(
+            df,
+            column_config={"تحديد": st.column_config.CheckboxColumn("🗑️ حذف")},
+            hide_index=True,
+            use_container_width=True,
+            height=400,
+            key=editor_key
+        )
+
+        if edited is not None and not edited.empty and "تحديد" in edited.columns:
+            selected_rows = edited[edited["تحديد"] == True]
+            if not selected_rows.empty:
+                for sid in selected_rows["معرف"].tolist():
+                    st.session_state.selected_ids.add(sid)
+
+        # ── مقارنة الـ Exact Video ──
+        exact_video_dups = [d for d in page_dups if d.get('match_type') == 'exact_video']
+        if exact_video_dups:
+            raw_id = getattr(channel, 'id', None)
+            ch_username = getattr(channel, 'username', None)
+
+            def tg_link(msg_id):
+                if ch_username:
+                    return f"https://t.me/{ch_username}/{msg_id}"
+                return f"https://t.me/c/{raw_id}/{msg_id}"
+
+            with st.expander(f"🔍 مقارنة الـ Exact Video ({len(exact_video_dups)} فيديو) — اضغط للمراجعة قبل الحذف"):
+                st.caption("الروابط تفتح الفيديو مباشرة في تيليجرام — لا يوجد تحميل")
+                for d in exact_video_dups:
+                    keeper_row = db.conn.execute(
+                        "SELECT msg_id, file_size, duration, width, height, msg_date FROM seen_files "
+                        "WHERE channel_id=? AND msg_id=?",
+                        (channel.id, d['keeper_id'])
+                    ).fetchone()
+
+                    st.markdown("---")
+                    c1, c2 = st.columns(2)
+
+                    with c1:
+                        st.markdown("**✅ الأصل (يُحتفظ به)**")
+                        if keeper_row:
+                            st.markdown(f"""
+| | |
+|---|---|
+| المعرف | `{keeper_row[0]}` |
+| الحجم | {fmt_size(keeper_row[1])} |
+| المدة | {keeper_row[2]} ث |
+| الأبعاد | {keeper_row[3]}×{keeper_row[4]} |
+| التاريخ | {keeper_row[5][:10]} |
+""")
+                        st.link_button("▶️ فتح في تيليجرام",
+                                      tg_link(d['keeper_id']),
+                                      use_container_width=True)
+
+                    with c2:
+                        st.markdown("**🗑️ المكرر (سيُحذف)**")
+                        st.markdown(f"""
+| | |
+|---|---|
+| المعرف | `{d['id']}` |
+| الحجم | {fmt_size(d['size'])} |
+| المدة | {d['duration']} ث |
+| التاريخ | {d['date'][:10]} |
+""")
+                        st.link_button("▶️ فتح في تيليجرام",
+                                      tg_link(d['id']),
+                                      use_container_width=True)
+
+        if total_pages > 1:
+            pcol1, pcol2, pcol3 = st.columns(3)
+            with pcol1:
+                if page > 0 and st.button("⬅️ السابقة", use_container_width=True):
+                    st.session_state.page -= 1; st.rerun()
+            with pcol2:
+                st.markdown(f"<p style='text-align:center;'>صفحة {page+1} من {total_pages}</p>",
+                            unsafe_allow_html=True)
+            with pcol3:
+                if page < total_pages - 1 and st.button("➡️ التالية", use_container_width=True):
+                    st.session_state.page += 1; st.rerun()
+
+        st.markdown("---")
+
+        # ── أزرار التحديد الذكي حسب نوع الطبقة ──
+        types_present = {}
+        for d in duplicates:
+            mt = d.get('match_type', 'file_id')
+            types_present.setdefault(mt, []).append(d['id'])
+
+        type_labels = {
+            "file_id": ("🔗 كل Forward",  "آمن 100% — تطابق تام",        "#f0fdf4", "#166534"),
+            "md5":     ("🔐 كل MD5",      "آمن — تطابق بايتي كامل",       "#f0fdf4", "#166534"),
+            "phash":   ("🖼️ كل pHash",    "تشابه بصري — راجع قبل الحذف", "#fefce8", "#854d0e"),
+            "exact_video": ("🎬 كل Exact Video", "تطابق دقيق جداً — آمن", "#f0fdf4", "#166534"),
+        }
+
+        present_keys = [k for k in ["file_id", "md5", "phash", "exact_video"] if k in types_present]
+        if present_keys:
+            btn_cols = st.columns(len(present_keys) + 1)
+            for i, mt in enumerate(present_keys):
+                label, tip, bg, color = type_labels[mt]
+                count = len(types_present[mt])
+                with btn_cols[i]:
+                    st.html(f"""<div style="font-size:0.72rem;color:{color};background:{bg};
+                                border-radius:6px;padding:3px 6px;text-align:center;margin-bottom:4px;">
+                                {tip}</div>""")
+                    if st.button(f"{label} ({count})", use_container_width=True, key=f"sel_{mt}"):
+                        for mid in types_present[mt]:
+                            st.session_state.selected_ids.add(mid)
+                        st.rerun()
+            with btn_cols[-1]:
+                st.html("""<div style="font-size:0.72rem;color:#64748b;background:#f1f5f9;
+                           border-radius:6px;padding:3px 6px;text-align:center;margin-bottom:4px;">
+                           إلغاء كل التحديد</div>""")
+                if st.button("✖️ إلغاء الكل", use_container_width=True, key="desel_all"):
+                    st.session_state.selected_ids = set(); st.rerun()
+
+        # زر CSV
+        df_report = pd.DataFrame([
+            {"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']),
+             "التاريخ": d['date'], "سبب التكرار": d.get('match_type', '')}
+            for d in duplicates
+        ])
+        st.download_button("📥 تقرير CSV", df_report.to_csv(index=False).encode('utf-8-sig'),
+                           "duplicates_report.csv", "text/csv", use_container_width=True)
+
+        selected_count = len(st.session_state.selected_ids)
+        if selected_count > 0:
+            st.html(f"""
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
+                        padding:10px 16px;margin:12px 0;color:#166534;font-weight:600;font-size:0.9rem;">
+              📌 محدد للحذف: {selected_count} رسالة
+            </div>
+            """)
+
+        if st.button(f"🗑️ حذف {selected_count} رسالة محددة",
+                     type="primary", disabled=selected_count == 0, use_container_width=True):
+            ids     = list(st.session_state.selected_ids)
+            prog    = st.progress(0, text="جاري الحذف...")
+            deleted = 0
+            failed  = 0
+            for i in range(0, len(ids), BATCH_DELETE_SIZE):
+                batch = ids[i:i + BATCH_DELETE_SIZE]
+                try:
+                    run_sync(_delete_messages(st.session_state.client, channel, batch))
+                    db.delete_msg_records(channel.id, batch)
+                    deleted += len(batch)
+                except FloodWaitError as e:
+                    st.warning(f"⏳ انتظار {e.seconds}s")
+                    time.sleep(e.seconds)
+                    try:
+                        run_sync(_delete_messages(st.session_state.client, channel, batch))
+                        db.delete_msg_records(channel.id, batch)
+                        deleted += len(batch)
+                    except Exception: failed += len(batch)
+                except Exception: failed += len(batch)
+                prog.progress((i + len(batch)) / len(ids))
+
+            st.session_state.last_deleted_count  = deleted
+            st.session_state.last_deleted_failed = failed
+            st.session_state.selected_ids = set()
+            db.close()
+            st.rerun()
+
+    db.close()
+
+st.markdown("---")
+st.markdown("<div class='footer-bar'>صُنع بعناية بواسطة <strong>F.ALSALEH</strong> · TeleSweep v5.0</div>",
+            unsafe_allow_html=True)
