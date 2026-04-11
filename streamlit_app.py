@@ -748,109 +748,108 @@ elif st.session_state.step == 'verify_code':
         except Exception as e:
             st.error(f"خطأ: {e}")
 
-# ---------- إعدادات القناة ----------
+# ---------- إعدادات القناة (بدون form لظهور الخيارات فوراً) ----------
 elif st.session_state.step == 'channel':
     st.success("✅ تم تسجيل الدخول")
-    with st.form("channel_form"):
-        channel_input = st.text_input("رابط القناة / المجموعة*", placeholder="@username أو https://t.me/+xxx")
+    
+    channel_input = st.text_input("رابط القناة / المجموعة*", placeholder="@username أو https://t.me/+xxx")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            media_types   = st.multiselect("أنواع الملفات", ["photo", "video", "document"],
-                                           default=["photo", "video"])
-            keep_strategy = st.selectbox("استراتيجية الاحتفاظ",
-                                         ["oldest (الأقدم)", "newest (الأحدث)", "largest (الأكبر)"])
-            keep_map = {"oldest (الأقدم)": "oldest", "newest (الأحدث)": "newest", "largest (الأكبر)": "largest"}
-        with col2:
-            min_size_mb = st.number_input("الحد الأدنى للحجم (MB)", 0.0, 10000.0, 0.0, step=1.0)
-            auto_mode   = st.toggle("الوضع الآلي", False, help="يفحص القناة كاملاً دفعة بعد دفعة بشكل تلقائي")
+    col1, col2 = st.columns(2)
+    with col1:
+        media_types   = st.multiselect("أنواع الملفات", ["photo", "video", "document"],
+                                       default=["photo", "video"])
+        keep_strategy = st.selectbox("استراتيجية الاحتفاظ",
+                                     ["oldest (الأقدم)", "newest (الأحدث)", "largest (الأكبر)"])
+        keep_map = {"oldest (الأقدم)": "oldest", "newest (الأحدث)": "newest", "largest (الأكبر)": "largest"}
+    with col2:
+        min_size_mb = st.number_input("الحد الأدنى للحجم (MB)", 0.0, 10000.0, 0.0, step=1.0)
+        auto_mode   = st.toggle("الوضع الآلي", False, help="يفحص القناة كاملاً دفعة بعد دفعة بشكل تلقائي")
 
-        st.markdown("---")
-        st.subheader("🔬 طبقات اكتشاف التكرار")
-        st.caption("Layer 1 (File ID) دائماً مفعّل — فعّل طبقات إضافية حسب الحاجة")
+    st.markdown("---")
+    st.subheader("🔬 طبقات اكتشاف التكرار")
+    st.caption("Layer 1 (File ID) دائماً مفعّل — فعّل طبقات إضافية حسب الحاجة")
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown("✅ **File ID** — تطابق مباشر (Forward)")
-            compute_md5 = st.checkbox("🔐 MD5 — تطابق المحتوى البايتي",
-                                      help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
-        with col_b:
-            compute_phash = st.checkbox("🖼️ pHash — تشابه بصري للصور",
-                                        value=_HAS_IMAGEHASH, disabled=not _HAS_IMAGEHASH,
-                                        help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("✅ **File ID** — تطابق مباشر (Forward)")
+        compute_md5 = st.checkbox("🔐 MD5 — تطابق المحتوى البايتي",
+                                  help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
+    with col_b:
+        compute_phash = st.checkbox("🖼️ pHash — تشابه بصري للصور",
+                                    value=_HAS_IMAGEHASH, disabled=not _HAS_IMAGEHASH,
+                                    help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
 
-        st.markdown("---")
-        st.subheader("🎬 Exact Video Matching (صارم مع هامش ضئيل)")
+    st.markdown("---")
+    st.subheader("🎬 Exact Video Matching (صارم مع هامش ضئيل)")
 
-        use_exact_video = st.toggle("تفعيل Exact Video Matching", value=False,
-                                    help="تطابق صارم جداً مع هامش صغير للمدة والحجم (الأبعاد يجب أن تتطابق تماماً).")
+    use_exact_video = st.toggle("تفعيل Exact Video Matching", value=False,
+                                help="تطابق صارم جداً مع هامش صغير للمدة والحجم (الأبعاد يجب أن تتطابق تماماً).")
 
-        duration_tolerance = 0.1
-        size_tolerance_percent = 1.0
+    duration_tolerance = 0.1
+    size_tolerance_percent = 1.0
 
-        if use_exact_video:
-            st.markdown("""
-            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
-                        padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#166534;">
-            ✅ <b>كيف يعمل؟</b> يُعتبر الفيديو مكرراً إذا كان الفرق في المدة ≤ الهامش المختار،
-            والفرق في الحجم ≤ 1%، والأبعاد متطابقة تماماً.
-            </div>
-            """, unsafe_allow_html=True)
+    if use_exact_video:
+        st.markdown("""
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
+                    padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#166534;">
+        ✅ <b>كيف يعمل؟</b> يُعتبر الفيديو مكرراً إذا كان الفرق في المدة ≤ الهامش المختار،
+        والفرق في الحجم ≤ 1%، والأبعاد متطابقة تماماً.
+        </div>
+        """, unsafe_allow_html=True)
 
-            st.markdown("**📏 اختر هامش المدة المناسب:**")
-            duration_tolerance = st.radio(
-                "هامش المدة (بالثواني)",
-                options=[0.01, 0.05, 0.1],
-                index=2,  # افتراضي 0.1
-                format_func=lambda x: f"{x} ثانية " + (
-                    "(دقيق جداً، قد يفوت بعض المكررات)" if x == 0.01 else
-                    "(دقيق، مناسب لمعظم الحالات)" if x == 0.05 else
-                    "(موصى به، يلتقط الفروق الصغيرة)"
-                ),
-                help="الفرق المسموح به في المدة بين الفيديوهين ليتم اعتبارهما مكررين."
-            )
+        st.markdown("**📏 اختر هامش المدة المناسب:**")
+        duration_tolerance = st.radio(
+            "هامش المدة (بالثواني)",
+            options=[0.01, 0.05, 0.1],
+            index=2,  # افتراضي 0.1
+            format_func=lambda x: f"{x} ثانية " + (
+                "(دقيق جداً، قد يفوت بعض المكررات)" if x == 0.01 else
+                "(دقيق، مناسب لمعظم الحالات)" if x == 0.05 else
+                "(موصى به، يلتقط الفروق الصغيرة)"
+            ),
+            help="الفرق المسموح به في المدة بين الفيديوهين ليتم اعتبارهما مكررين."
+        )
+        st.caption("💡 هامش الحجم ثابت عند 1% (مناسب لمعظم الفروق الناتجة عن إعادة الضغط)")
 
-            st.caption("💡 هامش الحجم ثابت عند 1% (مناسب لمعظم الفروق الناتجة عن إعادة الضغط)")
+    st.markdown("---")
+    uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
+    if uploaded_db:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        tmp.write(uploaded_db.getbuffer())
+        st.session_state.db_path = tmp.name
+        st.success("✅ تم تحميل قاعدة البيانات")
 
-        st.markdown("---")
-        uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
-        if uploaded_db:
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
-            tmp.write(uploaded_db.getbuffer())
-            st.session_state.db_path = tmp.name
-            st.success("✅ تم تحميل قاعدة البيانات")
-
-        if st.form_submit_button("🚀 بدء المسح", use_container_width=True, type="primary"):
-            if not channel_input:
-                st.error("أدخل رابط القناة")
-            else:
-                try:
-                    entity = run_sync(_get_entity(st.session_state.client, channel_input.strip()))
-                    st.session_state.channel     = entity
-                    st.session_state.scan_params = {
-                        'media_types': media_types,
-                        'keep_strategy': keep_map[keep_strategy],
-                        'min_size_mb': min_size_mb,
-                        'compute_md5': compute_md5,
-                        'compute_phash': compute_phash,
-                        'use_exact_video': use_exact_video,
-                        'duration_tolerance': duration_tolerance,
-                        'size_tolerance_percent': size_tolerance_percent,
-                    }
-                    st.session_state.auto_mode = auto_mode
-                    if st.session_state.db_path is None:
-                        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-                        st.session_state.db_path = tmp.name
-                    db = Database(st.session_state.db_path)
-                    _, total_scanned, files_saved = db.get_resume_state(entity.id)
-                    st.session_state.total_scanned = total_scanned
-                    st.session_state.files_saved   = files_saved
-                    db.close()
-                    st.session_state.auto_scan_running = auto_mode
-                    st.session_state.step = 'scanning'
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"خطأ: {e}")
+    if st.button("🚀 بدء المسح", use_container_width=True, type="primary"):
+        if not channel_input:
+            st.error("أدخل رابط القناة")
+        else:
+            try:
+                entity = run_sync(_get_entity(st.session_state.client, channel_input.strip()))
+                st.session_state.channel     = entity
+                st.session_state.scan_params = {
+                    'media_types': media_types,
+                    'keep_strategy': keep_map[keep_strategy],
+                    'min_size_mb': min_size_mb,
+                    'compute_md5': compute_md5,
+                    'compute_phash': compute_phash,
+                    'use_exact_video': use_exact_video,
+                    'duration_tolerance': duration_tolerance,
+                    'size_tolerance_percent': size_tolerance_percent,
+                }
+                st.session_state.auto_mode = auto_mode
+                if st.session_state.db_path is None:
+                    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+                    st.session_state.db_path = tmp.name
+                db = Database(st.session_state.db_path)
+                _, total_scanned, files_saved = db.get_resume_state(entity.id)
+                st.session_state.total_scanned = total_scanned
+                st.session_state.files_saved   = files_saved
+                db.close()
+                st.session_state.auto_scan_running = auto_mode
+                st.session_state.step = 'scanning'
+                st.rerun()
+            except Exception as e:
+                st.error(f"خطأ: {e}")
 
 # ---------- المسح ----------
 elif st.session_state.step == 'scanning':
