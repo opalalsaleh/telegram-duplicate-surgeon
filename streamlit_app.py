@@ -147,7 +147,7 @@ def get_thumb(media):
         if doc and doc.thumbs: return min(doc.thumbs, key=lambda t: getattr(t, 'size', 0))
     return None
 
-# ================== Exact Video Matching (صارم مع هامش ضئيل) ==================
+# ================== Exact Video Matching ==================
 
 def is_exact_video_duplicate(a: dict, b: dict,
                              duration_tolerance: float = 0.01,
@@ -188,11 +188,6 @@ def is_exact_video_duplicate(a: dict, b: dict,
 
 
 class _UnionFind:
-    """
-    Union-Find لمنع التعديم الزائف (Transitive Matching).
-    بدونه: A≈B و B≈C → يحذف B وC حتى لو A وC مختلفان.
-    معه: كل المتشابهين يُجمعون في مجموعة واحدة صحيحة.
-    """
     def __init__(self, n):
         self.parent = list(range(n))
         self.rank   = [0] * n
@@ -337,7 +332,6 @@ class Database:
                 PRIMARY KEY (channel_id, msg_id)
             ) WITHOUT ROWID
         """)
-        # إضافة الأعمدة width, height إذا لم تكن موجودة (للتوافق مع قواعد البيانات القديمة)
         try:
             self.conn.execute("ALTER TABLE seen_files ADD COLUMN width INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
@@ -372,7 +366,6 @@ class Database:
         self.conn.commit()
 
     def buffer_insert(self, record):
-        # record = (channel_id, msg_id, file_id, size, duration, width, height, md5, phash, date, type, mime, views, name)
         self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
         self.conn.commit()
 
@@ -384,7 +377,6 @@ class Database:
         self.conn.commit()
 
     def get_all_videos(self, channel_id, min_size=0) -> List[Dict]:
-        """يجلب كل الفيديوهات للمقارنة الدقيقة (المدة، الحجم، الأبعاد)"""
         rows = self.conn.execute(
             "SELECT msg_id, file_id, file_size, duration, width, height, msg_date, file_name "
             "FROM seen_files WHERE channel_id=? AND file_type='video' AND file_size>=?",
@@ -416,7 +408,7 @@ class Database:
                         "match_type": match_type
                     })
 
-        # ── Layer 1: file_id متطابق (نفس الرسالة مُعاد توجيهها) ──
+        # Layer 1: file_id
         cursor = self.conn.execute(
             "SELECT file_id FROM seen_files WHERE channel_id=? AND file_size>=? "
             "GROUP BY file_id HAVING COUNT(*)>1",
@@ -430,7 +422,7 @@ class Database:
             ).fetchall()
             add_group(group, "file_id")
 
-        # ── Layer 2: MD5 ──
+        # Layer 2: MD5
         if use_md5:
             cursor = self.conn.execute(
                 "SELECT md5_hash FROM seen_files WHERE channel_id=? AND md5_hash IS NOT NULL AND file_size>=? "
@@ -445,7 +437,7 @@ class Database:
                 ).fetchall()
                 add_group(group, "md5")
 
-        # ── Layer 3: pHash بـ Hamming distance (يكتشف الصور المرفوعة من جديد) ──
+        # Layer 3: pHash
         if use_phash and _HAS_IMAGEHASH:
             rows = self.conn.execute(
                 "SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
@@ -457,7 +449,6 @@ class Database:
             if rows:
                 n   = len(rows)
                 uf2 = _UnionFind(n)
-
                 hashes = []
                 for r in rows:
                     try:    hashes.append(imagehash.hex_to_hash(r[5]))
@@ -496,7 +487,7 @@ class Database:
                             "match_type": "phash"
                         })
 
-        # ── Layer 4: Exact Video Matching (مع هامش صغير) ──
+        # Layer 4: Exact Video
         if use_exact_video:
             videos = self.get_all_videos(channel_id, min_size)
 
@@ -748,7 +739,7 @@ elif st.session_state.step == 'verify_code':
         except Exception as e:
             st.error(f"خطأ: {e}")
 
-# ---------- إعدادات القناة (بدون form لظهور الخيارات فوراً) ----------
+# ---------- إعدادات القناة ----------
 elif st.session_state.step == 'channel':
     st.success("✅ تم تسجيل الدخول")
     
@@ -968,7 +959,7 @@ elif st.session_state.step == 'scanning':
         finally:
             db.close()
 
-# ---------- النتائج ----------
+# ---------- النتائج (تم تعديل جزء data_editor لمعالجة KeyError) ----------
 elif st.session_state.step == 'results':
     params  = st.session_state.scan_params
     channel = st.session_state.channel
@@ -997,7 +988,6 @@ elif st.session_state.step == 'results':
     if not duplicates:
         st.success("🎉 لا توجد مكررات!")
     else:
-        # إحصاء حسب نوع الطبقة
         type_counts = {}
         for d in duplicates:
             mt = d.get('match_type', 'file_id')
@@ -1039,13 +1029,24 @@ elif st.session_state.step == 'results':
             }
             for d in page_dups
         ])
+
+        # 🔧 إصلاح KeyError: استخدام مفتاح فريد والتحقق من وجود العمود
+        editor_key = f"editor_{channel.id}_{st.session_state.page}"
         edited = st.data_editor(
             df,
             column_config={"تحديد": st.column_config.CheckboxColumn("🗑️ حذف")},
-            hide_index=True, use_container_width=True, height=400
+            hide_index=True,
+            use_container_width=True,
+            height=400,
+            key=editor_key
         )
-        for sid in edited[edited["تحديد"] == True]["معرف"].tolist():
-            st.session_state.selected_ids.add(sid)
+
+        # معالجة الصفوف المحددة بأمان
+        if edited is not None and not edited.empty and "تحديد" in edited.columns:
+            selected_rows = edited[edited["تحديد"] == True]
+            if not selected_rows.empty:
+                for sid in selected_rows["معرف"].tolist():
+                    st.session_state.selected_ids.add(sid)
 
         # ── مقارنة الـ Exact Video ──
         exact_video_dups = [d for d in page_dups if d.get('match_type') == 'exact_video']
