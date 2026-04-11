@@ -150,12 +150,12 @@ def get_thumb(media):
 # ================== Exact Video Matching (صارم مع هامش ضئيل) ==================
 
 def is_exact_video_duplicate(a: dict, b: dict,
-                             duration_tolerance: float = 0.1,
-                             size_tolerance_percent: float = 1.0) -> bool:
+                             duration_tolerance: float = 0.01,
+                             size_tolerance_percent: float = 0.5) -> bool:
     """
     تطابق صارم جداً مع هامش ضئيل:
-    - المدة: فرق <= duration_tolerance (افتراضي 0.1 ثانية)
-    - الحجم: فرق <= size_tolerance_percent % (افتراضي 1%)
+    - المدة: فرق <= duration_tolerance (افتراضي 0.01 ثانية)
+    - الحجم: فرق <= size_tolerance_percent % (افتراضي 0.5%)
     - الأبعاد: يجب أن تتطابق تماماً (أو كلاهما غير معروف)
     """
     d1 = float(a.get("duration", 0))
@@ -398,7 +398,7 @@ class Database:
 
     def stream_duplicates(self, channel_id, keep_strategy, min_size=0,
                           use_md5=False, use_phash=False, use_exact_video=False,
-                          duration_tolerance=0.1, size_tolerance_percent=1.0):
+                          duration_tolerance=0.01, size_tolerance_percent=0.5):
         order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
         duplicates = []
         seen_msg_ids: set = set()
@@ -780,36 +780,44 @@ elif st.session_state.step == 'channel':
                                     help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
 
     st.markdown("---")
-    st.subheader("🎬 Exact Video Matching (صارم مع هامش ضئيل)")
+    st.subheader("🎬 Exact Video Matching (دقة عالية جداً)")
 
     use_exact_video = st.toggle("تفعيل Exact Video Matching", value=False,
-                                help="تطابق صارم جداً مع هامش صغير للمدة والحجم (الأبعاد يجب أن تتطابق تماماً).")
+                                help="تطابق صارم مع هامش صغير جداً للمدة والحجم (الأبعاد يجب أن تتطابق تماماً).")
 
-    duration_tolerance = 0.1
-    size_tolerance_percent = 1.0
+    duration_tolerance = 0.01
+    size_tolerance_percent = 0.5
 
     if use_exact_video:
         st.markdown("""
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
-                    padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#166534;">
-        ✅ <b>كيف يعمل؟</b> يُعتبر الفيديو مكرراً إذا كان الفرق في المدة ≤ الهامش المختار،
-        والفرق في الحجم ≤ 1%، والأبعاد متطابقة تماماً.
+                    padding:10px 14px;margin-bottom:12px;font-size:0.84rem;color:#166534;">
+        ✅ <b>دقة متناهية:</b> الإعدادات الافتراضية (0.01 ثانية و 0.5% حجم) تمنع تقريباً كل الإيجابيات الكاذبة.
+        إذا أردت اكتشاف المكررات حتى مع وجود فروق طفيفة (مثلاً 0.1 ثانية)، يمكنك تعديل القيم أدناه.
         </div>
         """, unsafe_allow_html=True)
 
-        st.markdown("**📏 اختر هامش المدة المناسب:**")
+        st.markdown("**📏 هامش المدة (بالثواني)**")
         duration_tolerance = st.radio(
-            "هامش المدة (بالثواني)",
-            options=[0.01, 0.05, 0.1],
-            index=2,  # افتراضي 0.1
-            format_func=lambda x: f"{x} ثانية " + (
-                "(دقيق جداً، قد يفوت بعض المكررات)" if x == 0.01 else
-                "(دقيق، مناسب لمعظم الحالات)" if x == 0.05 else
-                "(موصى به، يلتقط الفروق الصغيرة)"
+            "اختر مستوى الدقة للمدة:",
+            options=[0.001, 0.01, 0.05, 0.1],
+            index=1,  # افتراضي 0.01
+            format_func=lambda x: (
+                f"{x} ثانية - دقة قصوى (شبه تام)" if x == 0.001 else
+                f"{x} ثانية - دقة عالية (موصى به)" if x == 0.01 else
+                f"{x} ثانية - دقة متوسطة" if x == 0.05 else
+                f"{x} ثانية - دقة منخفضة (قد يلتقط مكررات أكثر)"
             ),
             help="الفرق المسموح به في المدة بين الفيديوهين ليتم اعتبارهما مكررين."
         )
-        st.caption("💡 هامش الحجم ثابت عند 1% (مناسب لمعظم الفروق الناتجة عن إعادة الضغط)")
+
+        st.markdown("**📦 هامش الحجم (%)**")
+        size_tolerance_percent = st.slider(
+            "النسبة المئوية للفرق المسموح به في حجم الملف:",
+            min_value=0.0, max_value=2.0, value=0.5, step=0.1,
+            help="القيمة الافتراضية 0.5% مناسبة جداً. كلما زادت النسبة زاد احتمال الإيجابيات الكاذبة."
+        )
+        st.caption(f"💡 الفرق المسموح به حالياً: {size_tolerance_percent:.1f}% من حجم الملف الأكبر.")
 
     st.markdown("---")
     uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
@@ -973,8 +981,8 @@ elif st.session_state.step == 'results':
         use_md5=params.get('compute_md5', False),
         use_phash=params.get('compute_phash', False),
         use_exact_video=params.get('use_exact_video', False),
-        duration_tolerance=params.get('duration_tolerance', 0.1),
-        size_tolerance_percent=params.get('size_tolerance_percent', 1.0),
+        duration_tolerance=params.get('duration_tolerance', 0.01),
+        size_tolerance_percent=params.get('size_tolerance_percent', 0.5),
     )
 
     st.html(f"<h3 style='margin:0 0 16px;color:#0f172a;'>📋 {getattr(channel, 'title', str(channel.id))}</h3>")
