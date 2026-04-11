@@ -781,36 +781,36 @@ elif st.session_state.step == 'channel':
 
         st.markdown("---")
         st.subheader("🎬 Exact Video Matching (صارم مع هامش ضئيل)")
-        st.caption("يكتشف الفيديوهات المتطابقة تقريباً (نفس المدة والحجم والأبعاد مع تسامح بسيط جداً)")
 
         use_exact_video = st.toggle("تفعيل Exact Video Matching", value=False,
                                     help="تطابق صارم جداً مع هامش صغير للمدة والحجم (الأبعاد يجب أن تتطابق تماماً).")
 
         duration_tolerance = 0.1
         size_tolerance_percent = 1.0
+
         if use_exact_video:
             st.markdown("""
             <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
                         padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#166534;">
-            ✅ <b>كيف يعمل؟</b> يُعتبر الفيديو مكرراً إذا كان الفرق في المدة ≤ الهامش،
-            والفرق في الحجم ≤ النسبة المحددة، والأبعاد متطابقة تماماً.<br>
-            الإعدادات الافتراضية (0.1 ث و 1%) دقيقة جداً وتلتقط التغييرات الطفيفة عند إعادة الرفع.
+            ✅ <b>كيف يعمل؟</b> يُعتبر الفيديو مكرراً إذا كان الفرق في المدة ≤ الهامش المختار،
+            والفرق في الحجم ≤ 1%، والأبعاد متطابقة تماماً.
             </div>
             """, unsafe_allow_html=True)
 
-            col_tol1, col_tol2 = st.columns(2)
-            with col_tol1:
-                duration_tolerance = st.number_input(
-                    "📏 هامش المدة (بالثواني)",
-                    min_value=0.0, max_value=1.0, value=0.1, step=0.05,
-                    help="الفرق المسموح به في المدة. القيمة الافتراضية 0.1 ثانية (دقيقة جداً)."
-                )
-            with col_tol2:
-                size_tolerance_percent = st.number_input(
-                    "📦 هامش الحجم (%)",
-                    min_value=0.0, max_value=5.0, value=1.0, step=0.2,
-                    help="النسبة المئوية للفرق المسموح به في حجم الملف. القيمة الافتراضية 1%."
-                )
+            st.markdown("**📏 اختر هامش المدة المناسب:**")
+            duration_tolerance = st.radio(
+                "هامش المدة (بالثواني)",
+                options=[0.01, 0.05, 0.1],
+                index=2,  # افتراضي 0.1
+                format_func=lambda x: f"{x} ثانية " + (
+                    "(دقيق جداً، قد يفوت بعض المكررات)" if x == 0.01 else
+                    "(دقيق، مناسب لمعظم الحالات)" if x == 0.05 else
+                    "(موصى به، يلتقط الفروق الصغيرة)"
+                ),
+                help="الفرق المسموح به في المدة بين الفيديوهين ليتم اعتبارهما مكررين."
+            )
+
+            st.caption("💡 هامش الحجم ثابت عند 1% (مناسب لمعظم الفروق الناتجة عن إعادة الضغط)")
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
