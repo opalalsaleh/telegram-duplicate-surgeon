@@ -1034,6 +1034,60 @@ elif st.session_state.step == 'results':
         for sid in edited[edited["تحديد"] == True]["معرف"].tolist():
             st.session_state.selected_ids.add(sid)
 
+        # ── مقارنة الـ Fuzzy (بدون تحميل — روابط فقط) ──
+        fuzzy_dups = [d for d in page_dups if d.get('match_type') == 'fuzzy']
+        if fuzzy_dups:
+            # channel_id للرابط: القناة العامة = @username، الخاصة = -100xxxxxxx
+            raw_id = getattr(channel, 'id', None)
+            ch_username = getattr(channel, 'username', None)
+
+            def tg_link(msg_id):
+                if ch_username:
+                    return f"https://t.me/{ch_username}/{msg_id}"
+                return f"https://t.me/c/{raw_id}/{msg_id}"
+
+            with st.expander(f"🔍 مقارنة الـ Fuzzy ({len(fuzzy_dups)} فيديو) — اضغط للمراجعة قبل الحذف"):
+                st.caption("الروابط تفتح الفيديو مباشرة في تيليجرام — لا يوجد تحميل")
+                for d in fuzzy_dups:
+                    # جلب بيانات الـ keeper من DB بدون تحميل
+                    keeper_row = db.conn.execute(
+                        "SELECT msg_id, file_size, duration, msg_date FROM seen_files "
+                        "WHERE channel_id=? AND msg_id=?",
+                        (channel.id, d['keeper_id'])
+                    ).fetchone()
+
+                    st.markdown("---")
+                    c1, c2 = st.columns(2)
+
+                    with c1:
+                        st.markdown("**✅ الأصل (يُحتفظ به)**")
+                        if keeper_row:
+                            st.markdown(f"""
+| | |
+|---|---|
+| المعرف | `{keeper_row[0]}` |
+| الحجم | {fmt_size(keeper_row[1])} |
+| المدة | {keeper_row[2]} ث |
+| التاريخ | {keeper_row[3][:10]} |
+""")
+                        st.link_button("▶️ فتح في تيليجرام",
+                                      tg_link(d['keeper_id']),
+                                      use_container_width=True)
+
+                    with c2:
+                        st.markdown("**🗑️ المكرر (سيُحذف)**")
+                        st.markdown(f"""
+| | |
+|---|---|
+| المعرف | `{d['id']}` |
+| الحجم | {fmt_size(d['size'])} |
+| المدة | {d['duration']} ث |
+| التاريخ | {d['date'][:10]} |
+""")
+                        st.link_button("▶️ فتح في تيليجرام",
+                                      tg_link(d['id']),
+                                      use_container_width=True)
+
         if total_pages > 1:
             pcol1, pcol2, pcol3 = st.columns(3)
             with pcol1:
@@ -1047,22 +1101,51 @@ elif st.session_state.step == 'results':
                     st.session_state.page += 1; st.rerun()
 
         st.markdown("---")
-        col_s1, col_s2, col_s3 = st.columns(3)
-        with col_s1:
-            if st.button("☑️ تحديد الكل في الصفحة", use_container_width=True):
-                for d in page_dups: st.session_state.selected_ids.add(d['id'])
-                st.rerun()
-        with col_s2:
-            if st.button("✖️ إلغاء تحديد الكل", use_container_width=True):
-                st.session_state.selected_ids = set(); st.rerun()
-        with col_s3:
-            df_report = pd.DataFrame([
-                {"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']),
-                 "التاريخ": d['date'], "سبب التكرار": d.get('match_type', '')}
-                for d in duplicates
-            ])
-            st.download_button("📥 تقرير CSV", df_report.to_csv(index=False).encode('utf-8-sig'),
-                               "duplicates_report.csv", "text/csv", use_container_width=True)
+
+        # ── أزرار التحديد الذكي حسب نوع الطبقة ──
+        # نحسب الأنواع الموجودة في كل المكررات (مو بس الصفحة الحالية)
+        types_present = {}
+        for d in duplicates:
+            mt = d.get('match_type', 'file_id')
+            types_present.setdefault(mt, []).append(d['id'])
+
+        type_labels = {
+            "file_id": ("🔗 كل Forward",  "آمن 100% — تطابق تام",        "#f0fdf4", "#166534"),
+            "md5":     ("🔐 كل MD5",      "آمن — تطابق بايتي كامل",       "#f0fdf4", "#166534"),
+            "phash":   ("🖼️ كل pHash",    "تشابه بصري — راجع قبل الحذف", "#fefce8", "#854d0e"),
+            "fuzzy":   ("🎬 كل Fuzzy",    "راجع الـ expander أولاً ⬆️",   "#fff7ed", "#c2410c"),
+        }
+
+        # نعرض أزرار التحديد بس للأنواع الموجودة
+        present_keys = [k for k in ["file_id", "md5", "phash", "fuzzy"] if k in types_present]
+        if present_keys:
+            btn_cols = st.columns(len(present_keys) + 1)  # +1 لزر الإلغاء
+            for i, mt in enumerate(present_keys):
+                label, tip, bg, color = type_labels[mt]
+                count = len(types_present[mt])
+                with btn_cols[i]:
+                    st.html(f"""<div style="font-size:0.72rem;color:{color};background:{bg};
+                                border-radius:6px;padding:3px 6px;text-align:center;margin-bottom:4px;">
+                                {tip}</div>""")
+                    if st.button(f"{label} ({count})", use_container_width=True, key=f"sel_{mt}"):
+                        for mid in types_present[mt]:
+                            st.session_state.selected_ids.add(mid)
+                        st.rerun()
+            with btn_cols[-1]:
+                st.html("""<div style="font-size:0.72rem;color:#64748b;background:#f1f5f9;
+                           border-radius:6px;padding:3px 6px;text-align:center;margin-bottom:4px;">
+                           إلغاء كل التحديد</div>""")
+                if st.button("✖️ إلغاء الكل", use_container_width=True, key="desel_all"):
+                    st.session_state.selected_ids = set(); st.rerun()
+
+        # زر CSV
+        df_report = pd.DataFrame([
+            {"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']),
+             "التاريخ": d['date'], "سبب التكرار": d.get('match_type', '')}
+            for d in duplicates
+        ])
+        st.download_button("📥 تقرير CSV", df_report.to_csv(index=False).encode('utf-8-sig'),
+                           "duplicates_report.csv", "text/csv", use_container_width=True)
 
         selected_count = len(st.session_state.selected_ids)
         if selected_count > 0:
