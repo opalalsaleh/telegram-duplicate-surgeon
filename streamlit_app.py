@@ -553,7 +553,7 @@ defaults = {
     'session_string': None, 'api_id': None, 'api_hash': None, 'phone': None,
     'last_deleted_count': 0, 'last_deleted_failed': 0,
     'auto_scan_running': False, 'scan_speed': 0.0,
-    'me': None, '_confirm_rescan': False,
+    'me': None, '_confirm_rescan': False, 'my_channels': None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -743,7 +743,36 @@ elif st.session_state.step == 'verify_code':
 elif st.session_state.step == 'channel':
     st.success("✅ تم تسجيل الدخول")
     
-    channel_input = st.text_input("رابط القناة / المجموعة*", placeholder="@username أو https://t.me/+xxx")
+    # --- جلب قائمة القنوات ---
+    if st.button("📋 جلب قنواتي ومجموعاتي", use_container_width=True):
+        with st.spinner("جاري جلب القنوات والمجموعات..."):
+            try:
+                async def fetch_dialogs():
+                    dialogs = await st.session_state.client.get_dialogs()
+                    channels = []
+                    for d in dialogs:
+                        if d.is_channel or d.is_group:
+                            channels.append({
+                                "name": d.name,
+                                "id": d.id,
+                                "entity": d.entity
+                            })
+                    return channels
+                st.session_state.my_channels = run_sync(fetch_dialogs())
+                st.success(f"تم جلب {len(st.session_state.my_channels)} قناة/مجموعة")
+            except Exception as e:
+                st.error(f"خطأ في جلب القنوات: {e}")
+
+    channel_input = None
+    if st.session_state.my_channels:
+        options = {f"{c['name']} (ID: {c['id']})": c for c in st.session_state.my_channels}
+        selected = st.selectbox("اختر قناة أو مجموعة:", list(options.keys()))
+        channel_input = options[selected]["entity"]
+        st.caption("أو يمكنك إدخال رابط يدويًا أدناه (سيتم تجاهل الاختيار أعلاه)")
+    
+    manual_input = st.text_input("أو أدخل رابط القناة / المجموعة يدويًا", placeholder="@username أو https://t.me/+xxx")
+    if manual_input:
+        channel_input = manual_input
 
     col1, col2 = st.columns(2)
     with col1:
@@ -767,7 +796,8 @@ elif st.session_state.step == 'channel':
                                   help="للملفات الصغيرة (<5MB). يضمن تطابقاً تاماً لكنه أبطأ.")
     with col_b:
         compute_phash = st.checkbox("🖼️ pHash — تشابه بصري للصور",
-                                    value=_HAS_IMAGEHASH, disabled=not _HAS_IMAGEHASH,
+                                    value=False,  # ❗ غير مفعل افتراضياً
+                                    disabled=not _HAS_IMAGEHASH,
                                     help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
 
     st.markdown("---")
@@ -784,7 +814,6 @@ elif st.session_state.step == 'channel':
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
                     padding:10px 14px;margin-bottom:12px;font-size:0.84rem;color:#166534;">
         ✅ <b>دقة متناهية:</b> الإعدادات الافتراضية (0.01 ثانية و 0.5% حجم) تمنع تقريباً كل الإيجابيات الكاذبة.
-        إذا أردت اكتشاف المكررات حتى مع وجود فروق طفيفة (مثلاً 0.1 ثانية)، يمكنك تعديل القيم أدناه.
         </div>
         """, unsafe_allow_html=True)
 
@@ -803,12 +832,19 @@ elif st.session_state.step == 'channel':
         )
 
         st.markdown("**📦 هامش الحجم (%)**")
-        size_tolerance_percent = st.slider(
-            "النسبة المئوية للفرق المسموح به في حجم الملف:",
-            min_value=0.0, max_value=2.0, value=0.5, step=0.1,
+        size_tolerance_percent = st.radio(
+            "اختر النسبة المئوية للفرق المسموح به في حجم الملف:",
+            options=[0.0, 0.1, 0.25, 0.5, 1.0],
+            index=3,  # افتراضي 0.5
+            format_func=lambda x: (
+                f"{x}% - تطابق تام" if x == 0.0 else
+                f"{x}% - شبه تام" if x == 0.1 else
+                f"{x}% - دقيق جداً" if x == 0.25 else
+                f"{x}% - دقة عالية (موصى به)" if x == 0.5 else
+                f"{x}% - دقة متوسطة (قد يلتقط مكررات أكثر)"
+            ),
             help="القيمة الافتراضية 0.5% مناسبة جداً. كلما زادت النسبة زاد احتمال الإيجابيات الكاذبة."
         )
-        st.caption(f"💡 الفرق المسموح به حالياً: {size_tolerance_percent:.1f}% من حجم الملف الأكبر.")
 
     st.markdown("---")
     uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
@@ -820,10 +856,13 @@ elif st.session_state.step == 'channel':
 
     if st.button("🚀 بدء المسح", use_container_width=True, type="primary"):
         if not channel_input:
-            st.error("أدخل رابط القناة")
+            st.error("الرجاء اختيار قناة أو إدخال رابط")
         else:
             try:
-                entity = run_sync(_get_entity(st.session_state.client, channel_input.strip()))
+                if isinstance(channel_input, str):
+                    entity = run_sync(_get_entity(st.session_state.client, channel_input.strip()))
+                else:
+                    entity = channel_input
                 st.session_state.channel     = entity
                 st.session_state.scan_params = {
                     'media_types': media_types,
@@ -959,7 +998,7 @@ elif st.session_state.step == 'scanning':
         finally:
             db.close()
 
-# ---------- النتائج (تم تعديل جزء data_editor لمعالجة KeyError) ----------
+# ---------- النتائج ----------
 elif st.session_state.step == 'results':
     params  = st.session_state.scan_params
     channel = st.session_state.channel
@@ -1030,7 +1069,6 @@ elif st.session_state.step == 'results':
             for d in page_dups
         ])
 
-        # 🔧 إصلاح KeyError: استخدام مفتاح فريد والتحقق من وجود العمود
         editor_key = f"editor_{channel.id}_{st.session_state.page}"
         edited = st.data_editor(
             df,
@@ -1041,7 +1079,6 @@ elif st.session_state.step == 'results':
             key=editor_key
         )
 
-        # معالجة الصفوف المحددة بأمان
         if edited is not None and not edited.empty and "تحديد" in edited.columns:
             selected_rows = edited[edited["تحديد"] == True]
             if not selected_rows.empty:
