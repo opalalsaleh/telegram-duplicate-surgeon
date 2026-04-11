@@ -28,165 +28,208 @@ st.set_page_config(page_title="TeleSweep – مزيل المكررات", page_ic
 
 st.html("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 /* ═══════════════════════════════════════════
-   BASE
+   VARIABLES & BASE
 ═══════════════════════════════════════════ */
-html, body, [class*="css"], .stApp {
-    font-family: 'IBM Plex Sans Arabic', 'Segoe UI', system-ui, sans-serif;
+:root {
+  --bg:      #0c0b14;
+  --bg2:     #13111f;
+  --bg3:     #1a1829;
+  --bg4:     #201e32;
+  --accent:  #6366f1;
+  --accent2: #818cf8;
+  --accent3: #c084fc;
+  --border:  rgba(99,102,241,0.15);
+  --border2: rgba(99,102,241,0.28);
+  --text:    #e2e0f0;
+  --text2:   #8b87b8;
+  --text3:   #4d4a6b;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger:  #f87171;
 }
-.stApp { background: #f1f5f9; }
+
+html, body, [class*="css"], .stApp {
+    font-family: 'IBM Plex Sans Arabic', 'Segoe UI', system-ui, sans-serif !important;
+    color-scheme: dark;
+}
+.stApp { background: var(--bg) !important; }
 .main .block-container {
-    padding-top: 1.5rem !important;
+    padding-top: 1.2rem !important;
     padding-bottom: 2rem !important;
-    max-width: 1020px !important;
+    max-width: 1060px !important;
+    background: transparent !important;
 }
 
 /* ═══════════════════════════════════════════
    SIDEBAR
 ═══════════════════════════════════════════ */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #1e1b4b 0%, #312e81 100%) !important;
-    border-right: 1px solid #3730a3;
+    background: var(--bg2) !important;
+    border-left: 1px solid var(--border) !important;
 }
 [data-testid="stSidebar"] > div:first-child { padding: 0; }
-[data-testid="stSidebar"] * { color: #c7d2fe !important; }
+[data-testid="stSidebar"] * { color: var(--text2) !important; }
 [data-testid="stSidebar"] hr {
-    border-color: #3730a3 !important;
-    margin: 0.6rem 0 !important;
+    border-color: var(--border) !important;
+    margin: 0.5rem 0 !important;
 }
 [data-testid="stSidebar"] .stButton > button {
-    background: rgba(255,255,255,0.06) !important;
-    border: 1px solid rgba(255,255,255,0.12) !important;
-    color: #a5b4fc !important;
-    border-radius: 10px;
-    font-weight: 500;
-    font-size: 0.84rem;
-    transition: all 0.15s;
-    backdrop-filter: blur(4px);
+    background: var(--bg3) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text2) !important;
+    border-radius: 10px !important;
+    font-weight: 500 !important;
+    font-size: 0.83rem !important;
+    transition: all 0.15s !important;
+    min-height: 38px !important;
 }
 [data-testid="stSidebar"] .stButton > button:hover {
-    background: rgba(255,255,255,0.14) !important;
-    border-color: rgba(165,180,252,0.5) !important;
-    color: #e0e7ff !important;
-    transform: none;
-    box-shadow: none;
+    background: var(--bg4) !important;
+    border-color: var(--border2) !important;
+    color: var(--text) !important;
+    transform: none !important;
+    box-shadow: none !important;
 }
 
 /* Sidebar Logo */
 .sidebar-logo {
     text-align: center;
-    padding: 26px 16px 18px;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 24px 16px 16px;
+    border-bottom: 1px solid var(--border);
     margin-bottom: 6px;
 }
 .sidebar-logo .logo-icon {
-    font-size: 2.4rem; line-height: 1;
-    display: block; margin-bottom: 10px;
-    filter: drop-shadow(0 0 12px rgba(129,140,248,0.6));
+    width: 48px; height: 48px;
+    background: linear-gradient(135deg, var(--accent), var(--accent3));
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; margin: 0 auto 12px;
 }
 .sidebar-logo .logo-name {
-    font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em;
-    background: linear-gradient(90deg, #a5b4fc 0%, #818cf8 50%, #c084fc 100%);
+    font-size: 1.3rem; font-weight: 600; letter-spacing: -0.02em;
+    background: linear-gradient(90deg, var(--accent2), var(--accent3));
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     display: block; margin-bottom: 2px;
 }
 .sidebar-logo .logo-ver {
-    font-size: 0.70rem; color: #6366f1 !important;
+    font-size: 0.68rem; color: var(--text3) !important;
     letter-spacing: 0.08em; text-transform: uppercase;
-}
-
-/* Sidebar nav label */
-.nav-label {
-    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em;
-    text-transform: uppercase; color: #6366f1 !important;
-    padding: 0 16px; margin: 8px 0 4px;
+    font-family: 'JetBrains Mono', monospace;
 }
 
 /* ═══════════════════════════════════════════
    MAIN HEADER
 ═══════════════════════════════════════════ */
 .ts-header {
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-    border-radius: 18px;
-    padding: 24px 28px;
-    margin-bottom: 24px;
-    box-shadow: 0 8px 32px rgba(79,70,229,0.25);
-    display: flex; align-items: center; gap: 16px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    display: flex; align-items: center; gap: 14px;
+    position: relative; overflow: hidden;
 }
-.ts-header-icon { font-size: 2.4rem; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.2)); }
+.ts-header::before {
+    content: '';
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg, var(--accent), var(--accent3));
+    border-radius: 0 16px 16px 0;
+}
+.ts-header-icon {
+    width: 46px; height: 46px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent), var(--accent3));
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+}
 .ts-header-title {
-    font-size: 1.8rem; font-weight: 700; color: #ffffff !important;
+    font-size: 1.5rem; font-weight: 600; color: var(--text) !important;
     letter-spacing: -0.02em; margin: 0; line-height: 1.2;
 }
-.ts-header-sub { font-size: 0.82rem; color: rgba(255,255,255,0.7); margin: 4px 0 0; }
+.ts-header-sub {
+    font-size: 0.78rem; color: var(--text2); margin: 3px 0 0;
+}
 .ts-badge {
-    background: rgba(255,255,255,0.15); color: #e0e7ff !important;
-    font-size: 0.68rem; font-weight: 700; padding: 3px 10px;
-    border-radius: 99px; letter-spacing: 0.08em;
-    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(99,102,241,0.15); color: var(--accent2) !important;
+    font-size: 0.65rem; font-weight: 600; padding: 3px 9px;
+    border-radius: 99px; letter-spacing: 0.06em;
+    border: 1px solid var(--border2);
     white-space: nowrap;
+    font-family: 'JetBrains Mono', monospace;
 }
 
 /* ═══════════════════════════════════════════
    METRIC CARDS
 ═══════════════════════════════════════════ */
 [data-testid="metric-container"] {
-    background: #ffffff;
-    border-radius: 16px;
-    padding: 20px 18px !important;
-    border: 1px solid #e2e8f0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    transition: all 0.2s ease;
-    position: relative;
-    overflow: hidden;
+    background: var(--bg2) !important;
+    border-radius: 14px !important;
+    padding: 16px 16px !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: none !important;
+    transition: border-color 0.2s, transform 0.2s !important;
+    position: relative !important;
+    overflow: hidden !important;
 }
 [data-testid="metric-container"]::before {
     content: '';
-    position: absolute; top: 0; left: 0;
-    width: 4px; height: 100%;
-    background: linear-gradient(180deg, #6366f1, #818cf8);
-    border-radius: 0;
+    position: absolute; top: 0; right: 0;
+    width: 100%; height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent3));
 }
 [data-testid="metric-container"]:hover {
-    box-shadow: 0 8px 24px rgba(99,102,241,0.12);
-    transform: translateY(-2px);
-    border-color: #c7d2fe;
+    border-color: var(--border2) !important;
+    transform: translateY(-2px) !important;
 }
-[data-testid="stMetricLabel"] { color: #64748b !important; font-size: 0.80rem !important; font-weight: 500 !important; }
-[data-testid="stMetricValue"] { color: #1e1b4b !important; font-weight: 700 !important; }
+[data-testid="stMetricLabel"] {
+    color: var(--text3) !important;
+    font-size: 0.72rem !important;
+    font-weight: 500 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+}
+[data-testid="stMetricValue"] {
+    color: var(--text) !important;
+    font-weight: 600 !important;
+    font-family: 'JetBrains Mono', monospace !important;
+}
 
 /* ═══════════════════════════════════════════
    BUTTONS
 ═══════════════════════════════════════════ */
 .stButton > button {
     border-radius: 10px !important;
-    font-weight: 600 !important;
-    font-size: 0.87rem !important;
-    min-height: 42px !important;
-    transition: all 0.18s cubic-bezier(.4,0,.2,1) !important;
-    border: 1.5px solid #e2e8f0 !important;
-    background: #ffffff !important;
-    color: #374151 !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    min-height: 40px !important;
+    transition: all 0.15s !important;
+    border: 1px solid var(--border) !important;
+    background: var(--bg3) !important;
+    color: var(--text2) !important;
+    box-shadow: none !important;
 }
 .stButton > button:hover {
-    border-color: #c7d2fe !important;
-    box-shadow: 0 4px 14px rgba(99,102,241,0.15) !important;
+    border-color: var(--border2) !important;
+    color: var(--text) !important;
+    background: var(--bg4) !important;
     transform: translateY(-1px) !important;
-    color: #1e1b4b !important;
+    box-shadow: none !important;
 }
 .stButton > button:active { transform: translateY(0) !important; }
 .stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+    background: var(--accent) !important;
     color: #ffffff !important;
     border: none !important;
-    box-shadow: 0 4px 14px rgba(79,70,229,0.35) !important;
+    box-shadow: 0 4px 16px rgba(99,102,241,0.35) !important;
 }
 .stButton > button[kind="primary"]:hover {
-    box-shadow: 0 8px 24px rgba(79,70,229,0.45) !important;
-    transform: translateY(-2px) !important;
+    background: var(--accent2) !important;
+    box-shadow: 0 6px 20px rgba(99,102,241,0.45) !important;
+    transform: translateY(-1px) !important;
     color: #ffffff !important;
 }
 
@@ -197,53 +240,63 @@ html, body, [class*="css"], .stApp {
 .stNumberInput > div > div > input,
 .stTextArea > div > textarea {
     border-radius: 10px !important;
-    border: 1.5px solid #e2e8f0 !important;
-    background: #ffffff !important;
-    font-size: 0.9rem !important;
+    border: 1px solid var(--border) !important;
+    background: var(--bg) !important;
+    color: var(--text) !important;
+    font-size: 0.87rem !important;
     transition: border-color 0.15s, box-shadow 0.15s !important;
     padding: 10px 14px !important;
 }
 .stTextInput > div > div > input:focus,
 .stNumberInput > div > div > input:focus,
 .stTextArea > div > textarea:focus {
-    border-color: #6366f1 !important;
+    border-color: var(--accent) !important;
     box-shadow: 0 0 0 3px rgba(99,102,241,0.15) !important;
 }
+.stTextInput > div > div > input::placeholder,
+.stTextArea > div > textarea::placeholder { color: var(--text3) !important; }
+
 .stSelectbox > div > div,
 .stMultiSelect > div > div {
     border-radius: 10px !important;
-    border: 1.5px solid #e2e8f0 !important;
-    background: #ffffff !important;
+    border: 1px solid var(--border) !important;
+    background: var(--bg) !important;
+    color: var(--text) !important;
 }
-label, .stCheckbox label p, .stToggle label p {
-    color: #374151 !important;
-    font-size: 0.87rem !important;
-    font-weight: 500 !important;
+.stSelectbox > div > div > div,
+.stMultiSelect > div > div > div { color: var(--text) !important; }
+
+label, .stCheckbox label p, .stToggle label p, p, .stCaption p {
+    color: var(--text2) !important;
+    font-size: 0.85rem !important;
 }
+h1, h2, h3, h4 { color: var(--text) !important; }
+h2 { font-size: 1.05rem !important; }
+h3 { font-size: 0.95rem !important; }
+strong { color: var(--text) !important; }
+.stMarkdown p { color: var(--text2) !important; }
 
 /* ═══════════════════════════════════════════
    FORM / CARD
 ═══════════════════════════════════════════ */
 [data-testid="stForm"] {
-    background: #ffffff !important;
-    border-radius: 18px !important;
-    padding: 28px !important;
-    border: 1px solid #e2e8f0 !important;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
+    background: var(--bg2) !important;
+    border-radius: 16px !important;
+    padding: 24px !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: none !important;
 }
 
-/* Section card */
 .ts-section {
-    background: #ffffff;
+    background: var(--bg2);
     border-radius: 14px;
-    padding: 20px 22px;
-    border: 1px solid #e2e8f0;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    margin-bottom: 16px;
+    padding: 18px 20px;
+    border: 1px solid var(--border);
+    margin-bottom: 14px;
 }
 .ts-section-title {
-    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: #6366f1; margin-bottom: 12px;
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text3); margin-bottom: 12px;
     display: flex; align-items: center; gap: 6px;
 }
 
@@ -251,141 +304,147 @@ label, .stCheckbox label p, .stToggle label p {
    RESULT CARDS
 ═══════════════════════════════════════════ */
 .dup-card {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 14px;
-    padding: 14px 18px;
-    margin-bottom: 10px;
-    transition: all 0.18s ease;
-    display: flex; align-items: center; gap: 14px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    transition: all 0.15s ease;
+    display: flex; align-items: center; gap: 12px;
 }
 .dup-card:hover {
-    border-color: #c7d2fe;
-    box-shadow: 0 4px 16px rgba(99,102,241,0.10);
+    border-color: var(--border2);
+    background: var(--bg3);
     transform: translateX(-2px);
 }
 .dup-card-icon {
-    font-size: 1.6rem; min-width: 36px; text-align: center;
-    background: #f0f0fe; border-radius: 10px; padding: 8px;
+    font-size: 1.4rem; min-width: 36px; text-align: center;
+    background: var(--bg3); border-radius: 9px; padding: 7px;
+    border: 1px solid var(--border);
 }
 .dup-card-body { flex: 1; min-width: 0; }
-.dup-card-name { font-weight: 600; color: #1e1b4b; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dup-card-meta { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
-.dup-badge {
-    font-size: 0.68rem; font-weight: 700; padding: 3px 9px;
-    border-radius: 99px; white-space: nowrap;
+.dup-card-name {
+    font-weight: 500; color: var(--text); font-size: 0.87rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.badge-fileid  { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
-.badge-md5     { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
-.badge-phash   { background: #fefce8; color: #854d0e; border: 1px solid #fde68a; }
-.badge-exact   { background: #f0f0fe; color: #4338ca; border: 1px solid #c7d2fe; }
+.dup-card-meta { font-size: 0.72rem; color: var(--text3); margin-top: 3px; }
+.dup-badge {
+    font-size: 0.65rem; font-weight: 600; padding: 2px 8px;
+    border-radius: 99px; white-space: nowrap;
+    font-family: 'JetBrains Mono', monospace;
+    border: 1px solid;
+}
+.badge-fileid { background: rgba(52,211,153,0.1);  color: #34d399; border-color: rgba(52,211,153,0.25); }
+.badge-md5    { background: rgba(129,140,248,0.1);  color: #818cf8; border-color: rgba(129,140,248,0.25); }
+.badge-phash  { background: rgba(251,191,36,0.1);   color: #fbbf24; border-color: rgba(251,191,36,0.25); }
+.badge-exact  { background: rgba(192,132,252,0.1);  color: #c084fc; border-color: rgba(192,132,252,0.25); }
 
-/* Alert / warning banner */
+/* ═══════════════════════════════════════════
+   ALERTS
+═══════════════════════════════════════════ */
 .ts-alert-warn {
-    background: linear-gradient(135deg, #fff7ed, #fef3c7);
-    border: 1px solid #fcd34d;
-    border-radius: 12px;
-    padding: 12px 18px;
-    margin-bottom: 16px;
+    background: rgba(251,191,36,0.07);
+    border: 1px solid rgba(251,191,36,0.2);
+    border-radius: 12px; padding: 12px 16px; margin-bottom: 14px;
     display: flex; align-items: center; gap: 10px;
+    color: var(--warning);
 }
 .ts-alert-ok {
-    background: linear-gradient(135deg, #f0fdf4, #dcfce7);
-    border: 1px solid #86efac;
-    border-radius: 12px;
-    padding: 12px 18px;
-    margin-bottom: 16px;
+    background: rgba(52,211,153,0.07);
+    border: 1px solid rgba(52,211,153,0.2);
+    border-radius: 12px; padding: 12px 16px; margin-bottom: 14px;
+    color: var(--success);
 }
-
-/* ═══════════════════════════════════════════
-   PROGRESS
-═══════════════════════════════════════════ */
-.stProgress > div > div > div > div {
-    background: linear-gradient(90deg, #6366f1, #8b5cf6, #c084fc) !important;
-    border-radius: 99px !important;
-    animation: shimmer 2s infinite linear;
-}
-@keyframes shimmer {
-    0%   { background-position: -200% center; }
-    100% { background-position:  200% center; }
-}
-
-/* ═══════════════════════════════════════════
-   DATA TABLE
-═══════════════════════════════════════════ */
-.stDataEditor {
-    border-radius: 14px !important;
-    overflow: hidden !important;
-    border: 1px solid #e2e8f0 !important;
-    box-shadow: 0 1px 6px rgba(0,0,0,0.04) !important;
+[data-testid="stAlert"] {
+    border-radius: 12px !important;
+    background: rgba(99,102,241,0.07) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text2) !important;
 }
 
 /* ═══════════════════════════════════════════
    TABS
 ═══════════════════════════════════════════ */
 .stTabs [data-baseweb="tab-list"] {
-    background: #f1f5f9 !important;
+    background: var(--bg2) !important;
     border-radius: 12px !important;
     padding: 4px !important;
-    gap: 4px !important;
+    gap: 3px !important;
+    border: 1px solid var(--border) !important;
 }
 .stTabs [data-baseweb="tab"] {
     border-radius: 9px !important;
-    font-weight: 600 !important;
-    font-size: 0.86rem !important;
-    color: #64748b !important;
+    font-weight: 500 !important;
+    font-size: 0.84rem !important;
+    color: var(--text3) !important;
+    transition: all 0.15s !important;
 }
 .stTabs [aria-selected="true"] {
-    background: #ffffff !important;
-    color: #4f46e5 !important;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.08) !important;
+    background: var(--bg4) !important;
+    color: var(--accent2) !important;
+    box-shadow: none !important;
 }
 
 /* ═══════════════════════════════════════════
    EXPANDER
 ═══════════════════════════════════════════ */
 [data-testid="stExpander"] {
-    border: 1px solid #e2e8f0 !important;
+    border: 1px solid var(--border) !important;
     border-radius: 12px !important;
     overflow: hidden !important;
+    background: var(--bg2) !important;
 }
 [data-testid="stExpander"] summary {
-    font-weight: 600 !important;
-    color: #374151 !important;
-    background: #f8fafc !important;
-    padding: 12px 16px !important;
+    font-weight: 500 !important;
+    color: var(--text2) !important;
+    background: var(--bg3) !important;
+    padding: 11px 16px !important;
+}
+
+/* ═══════════════════════════════════════════
+   PROGRESS
+═══════════════════════════════════════════ */
+.stProgress > div { background: var(--bg4) !important; border-radius: 99px !important; }
+.stProgress > div > div > div > div {
+    background: linear-gradient(90deg, var(--accent), var(--accent2), var(--accent3)) !important;
+    border-radius: 99px !important;
+}
+
+/* ═══════════════════════════════════════════
+   DATA TABLE
+═══════════════════════════════════════════ */
+.stDataEditor {
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: none !important;
 }
 
 /* ═══════════════════════════════════════════
    MISC
 ═══════════════════════════════════════════ */
-hr { border-color: #f1f5f9 !important; margin: 1.2rem 0 !important; }
-[data-testid="stAlert"] { border-radius: 12px !important; }
-h1,h2,h3 { color: #1e1b4b !important; }
-h2 { font-size: 1.1rem !important; }
-h3 { font-size: 1rem !important; }
+hr { border-color: var(--border) !important; margin: 1rem 0 !important; }
 
 .footer-bar {
-    text-align: center; padding: 20px; color: #94a3b8;
-    font-size: 0.78rem; margin-top: 40px;
-    border-top: 1px solid #e2e8f0;
+    text-align: center; padding: 20px; color: var(--text3);
+    font-size: 0.75rem; margin-top: 40px;
+    border-top: 1px solid var(--border);
 }
-.footer-bar strong { color: #6366f1; }
+.footer-bar strong { color: var(--accent2); }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: #f1f5f9; }
-::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 99px; }
-::-webkit-scrollbar-thumb:hover { background: #818cf8; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
-/* Mobile responsive */
+/* Mobile */
 @media (max-width: 768px) {
     .main .block-container { padding: 1rem 0.8rem !important; }
-    .ts-header { padding: 16px 18px; gap: 12px; }
-    .ts-header-title { font-size: 1.4rem; }
-    [data-testid="metric-container"] { padding: 14px 12px !important; }
-    .dup-card { padding: 10px 12px; gap: 10px; }
+    .ts-header { padding: 14px 16px; gap: 10px; }
+    .ts-header-title { font-size: 1.2rem; }
+    [data-testid="metric-container"] { padding: 12px 10px !important; }
+    .dup-card { padding: 9px 11px; gap: 9px; }
 }
 </style>
 """)
@@ -897,15 +956,15 @@ with st.sidebar:
                 st.session_state.pop(k, None)
             st.session_state.step = 'login'; st.rerun()
 
-    st.markdown("<p style='text-align:center;font-size:0.8rem;color:#64748b;margin-top:8px;'>© F.ALSALEH</p>",
+    st.markdown("<p style='text-align:center;font-size:0.75rem;color:#4d4a6b;margin-top:8px;font-family:monospace;'>© F.ALSALEH</p>",
                 unsafe_allow_html=True)
 
 # ================== المحتوى الرئيسي ==================
 st.html("""
 <div class="ts-header">
   <div class="ts-header-icon">🧹</div>
-  <div style="flex:1;">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+  <div style="flex:1;min-width:0;">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span class="ts-header-title">TeleSweep</span>
       <span class="ts-badge">v5.0</span>
     </div>
@@ -1101,8 +1160,8 @@ elif st.session_state.step == 'channel':
 
     if use_exact_video:
         st.markdown("""
-        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
-                    padding:10px 14px;margin-bottom:12px;font-size:0.84rem;color:#166534;">
+        <div style="background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:9px;
+                    padding:10px 14px;margin-bottom:12px;font-size:0.84rem;color:#34d399;">
         ✅ <b>دقة متناهية:</b> الإعدادات الافتراضية (0.01 ثانية و 0.5% حجم) تمنع تقريباً كل الإيجابيات الكاذبة.
         </div>
         """, unsafe_allow_html=True)
@@ -1190,8 +1249,8 @@ elif st.session_state.step == 'scanning':
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
       <span style="font-size:1.4rem;">📡</span>
       <div>
-        <div style="font-size:1.1rem;font-weight:700;color:#1e1b4b;">مسح القناة</div>
-        <div style="font-size:0.82rem;color:#6366f1;font-weight:600;">{channel_title}</div>
+        <div style="font-size:1.1rem;font-weight:700;color:#e2e0f0;">مسح القناة</div>
+        <div style="font-size:0.82rem;color:#818cf8;">{channel_title}</div>
       </div>
     </div>
     """)
@@ -1320,8 +1379,8 @@ elif st.session_state.step == 'results':
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
       <span style="font-size:1.4rem;">📋</span>
       <div>
-        <div style="font-size:1.1rem;font-weight:700;color:#1e1b4b;">نتائج الفحص</div>
-        <div style="font-size:0.82rem;color:#6366f1;font-weight:600;">{channel_title}</div>
+        <div style="font-size:1.1rem;font-weight:700;color:#e2e0f0;">نتائج الفحص</div>
+        <div style="font-size:0.82rem;color:#818cf8;">{channel_title}</div>
       </div>
     </div>
     """)
@@ -1348,7 +1407,7 @@ elif st.session_state.step == 'results':
             "exact_video": "🎬 Exact Video",
         }
         summary_parts = " · ".join(
-            f"<span style='color:#4338ca;font-weight:700;'>{badge_map.get(k,k)}</span>: {v}"
+            f"<span style='color:#818cf8;font-weight:600;'>{badge_map.get(k,k)}</span>: {v}"
             for k, v in type_counts.items()
         )
 
@@ -1356,10 +1415,10 @@ elif st.session_state.step == 'results':
         <div class="ts-alert-warn">
           <span style="font-size:1.4rem;">⚠️</span>
           <div>
-            <div style="font-weight:700;color:#92400e;font-size:0.95rem;">
+            <div style="font-weight:700;color:#fbbf24;font-size:0.92rem;">
               {len(duplicates)} ملف مكرر بحاجة للمراجعة
             </div>
-            <div style="font-size:0.78rem;color:#b45309;margin-top:2px;">{summary_parts}</div>
+            <div style="font-size:0.78rem;color:#8b87b8;margin-top:2px;">{summary_parts}</div>
           </div>
         </div>
         """)
@@ -1498,10 +1557,10 @@ elif st.session_state.step == 'results':
             types_present.setdefault(mt, []).append(d['id'])
 
         type_labels = {
-            "file_id": ("🔗 كل Forward",  "آمن 100% — تطابق تام",        "#f0fdf4", "#166534"),
-            "md5":     ("🔐 كل MD5",      "آمن — تطابق بايتي كامل",       "#f0fdf4", "#166534"),
-            "phash":   ("🖼️ كل pHash",    "تشابه بصري — راجع قبل الحذف", "#fefce8", "#854d0e"),
-            "exact_video": ("🎬 كل Exact Video", "تطابق دقيق جداً — آمن", "#f0fdf4", "#166534"),
+            "file_id":     ("🔗 كل Forward",    "آمن 100% — تطابق تام",        "rgba(52,211,153,0.08)",  "#34d399"),
+            "md5":         ("🔐 كل MD5",         "آمن — تطابق بايتي كامل",      "rgba(129,140,248,0.08)", "#818cf8"),
+            "phash":       ("🖼️ كل pHash",       "تشابه بصري — راجع قبل الحذف","rgba(251,191,36,0.08)",  "#fbbf24"),
+            "exact_video": ("🎬 كل Exact Video", "تطابق دقيق جداً — آمن",      "rgba(192,132,252,0.08)", "#c084fc"),
         }
 
         present_keys = [k for k in ["file_id", "md5", "phash", "exact_video"] if k in types_present]
@@ -1511,17 +1570,13 @@ elif st.session_state.step == 'results':
                 label, tip, bg, color = type_labels[mt]
                 count = len(types_present[mt])
                 with btn_cols[i]:
-                    st.html(f"""<div style="font-size:0.72rem;color:{color};background:{bg};
-                                border-radius:6px;padding:3px 6px;text-align:center;margin-bottom:4px;">
-                                {tip}</div>""")
+                    st.html(f"""<div style="font-size:0.68rem;color:{color};background:{bg};border:1px solid {color}33;border-radius:6px;padding:3px 8px;text-align:center;margin-bottom:4px;">{tip}</div>""")
                     if st.button(f"{label} ({count})", use_container_width=True, key=f"sel_{mt}"):
                         for mid in types_present[mt]:
                             st.session_state.selected_ids.add(mid)
                         st.rerun()
             with btn_cols[-1]:
-                st.html("""<div style="font-size:0.72rem;color:#64748b;background:#f1f5f9;
-                           border-radius:6px;padding:3px 6px;text-align:center;margin-bottom:4px;">
-                           إلغاء كل التحديد</div>""")
+                st.html("""<div style="font-size:0.68rem;color:#4d4a6b;background:rgba(77,74,107,0.1);border:1px solid rgba(77,74,107,0.2);border-radius:6px;padding:3px 8px;text-align:center;margin-bottom:4px;">إلغاء التحديد</div>""")
                 if st.button("✖️ إلغاء الكل", use_container_width=True, key="desel_all"):
                     st.session_state.selected_ids = set(); st.rerun()
 
@@ -1537,8 +1592,8 @@ elif st.session_state.step == 'results':
         selected_count = len(st.session_state.selected_ids)
         if selected_count > 0:
             st.html(f"""
-            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
-                        padding:10px 16px;margin:12px 0;color:#166534;font-weight:600;font-size:0.9rem;">
+            <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);border-radius:10px;
+                        padding:10px 16px;margin:12px 0;color:#818cf8;font-weight:500;font-size:0.87rem;">
               📌 محدد للحذف: {selected_count} رسالة
             </div>
             """)
