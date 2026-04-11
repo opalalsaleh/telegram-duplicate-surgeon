@@ -24,87 +24,369 @@ except ImportError:
     _HAS_IMAGEHASH = False
 
 # ================== تهيئة الصفحة ==================
-st.set_page_config(page_title="DupZap – مزيل المكررات", page_icon="✂️", layout="wide")
+st.set_page_config(page_title="TeleSweep – مزيل المكررات", page_icon="🧹", layout="wide")
 
 st.html("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
-    html, body, [class*="css"], .stApp {
-        font-family: 'IBM Plex Sans Arabic', 'Segoe UI', system-ui, sans-serif;
-    }
-    .stApp { background: #f8fafc; }
-    .main .block-container { padding-top: 2rem; max-width: 960px; }
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
 
-    [data-testid="stSidebar"] { background: #0f172a !important; }
-    [data-testid="stSidebar"] > div:first-child { padding: 0; }
-    [data-testid="stSidebar"] * { color: #cbd5e1 !important; }
-    [data-testid="stSidebar"] hr { border-color: #1e293b !important; margin: 0.75rem 0 !important; }
-    [data-testid="stSidebar"] .stButton > button {
-        background: transparent !important; border: 1px solid #1e293b !important;
-        color: #94a3b8 !important; border-radius: 8px; font-weight: 500; font-size: 0.85rem;
-    }
-    [data-testid="stSidebar"] .stButton > button:hover {
-        background: #1e293b !important; border-color: #334155 !important; color: #e2e8f0 !important;
-    }
-    .sidebar-logo { text-align:center; padding:28px 16px 20px; border-bottom:1px solid #1e293b; margin-bottom:8px; }
-    .sidebar-logo .logo-icon { font-size:2.6rem; line-height:1; display:block; margin-bottom:10px; }
-    .sidebar-logo .logo-name {
-        font-size:1.45rem; font-weight:700;
-        background:linear-gradient(90deg,#38bdf8 0%,#818cf8 100%);
-        -webkit-background-clip:text; -webkit-text-fill-color:transparent; display:block; margin-bottom:3px;
-    }
-    .sidebar-logo .logo-ver { font-size:0.72rem; color:#475569 !important; letter-spacing:0.04em; }
+/* ═══════════════════════════════════════════
+   BASE
+═══════════════════════════════════════════ */
+html, body, [class*="css"], .stApp {
+    font-family: 'IBM Plex Sans Arabic', 'Segoe UI', system-ui, sans-serif;
+}
+.stApp { background: #f1f5f9; }
+.main .block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 1020px !important;
+}
 
-    h1 { font-size:2rem !important; font-weight:700 !important; color:#0f172a !important; letter-spacing:-0.02em; margin-bottom:0 !important; }
-    h2, h3 { font-weight:600 !important; color:#1e293b !important; }
+/* ═══════════════════════════════════════════
+   SIDEBAR
+═══════════════════════════════════════════ */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1e1b4b 0%, #312e81 100%) !important;
+    border-right: 1px solid #3730a3;
+}
+[data-testid="stSidebar"] > div:first-child { padding: 0; }
+[data-testid="stSidebar"] * { color: #c7d2fe !important; }
+[data-testid="stSidebar"] hr {
+    border-color: #3730a3 !important;
+    margin: 0.6rem 0 !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    color: #a5b4fc !important;
+    border-radius: 10px;
+    font-weight: 500;
+    font-size: 0.84rem;
+    transition: all 0.15s;
+    backdrop-filter: blur(4px);
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(255,255,255,0.14) !important;
+    border-color: rgba(165,180,252,0.5) !important;
+    color: #e0e7ff !important;
+    transform: none;
+    box-shadow: none;
+}
 
-    .stButton > button {
-        border-radius:9px; font-weight:600; font-size:0.88rem; min-height:42px;
-        transition:all 0.18s cubic-bezier(.4,0,.2,1); border:1.5px solid #e2e8f0 !important;
-        background:#ffffff !important; color:#374151 !important; box-shadow:0 1px 3px rgba(0,0,0,0.06);
-    }
-    .stButton > button:hover {
-        border-color:#cbd5e1 !important; box-shadow:0 4px 12px rgba(0,0,0,0.09) !important;
-        transform:translateY(-1px); color:#0f172a !important;
-    }
-    .stButton > button[kind="primary"] {
-        background:linear-gradient(135deg,#0ea5e9 0%,#6366f1 100%) !important;
-        color:#ffffff !important; border:none !important; box-shadow:0 3px 12px rgba(99,102,241,0.30) !important;
-    }
-    .stButton > button[kind="primary"]:hover {
-        box-shadow:0 6px 20px rgba(99,102,241,0.40) !important; transform:translateY(-2px); color:#ffffff !important;
-    }
+/* Sidebar Logo */
+.sidebar-logo {
+    text-align: center;
+    padding: 26px 16px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 6px;
+}
+.sidebar-logo .logo-icon {
+    font-size: 2.4rem; line-height: 1;
+    display: block; margin-bottom: 10px;
+    filter: drop-shadow(0 0 12px rgba(129,140,248,0.6));
+}
+.sidebar-logo .logo-name {
+    font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em;
+    background: linear-gradient(90deg, #a5b4fc 0%, #818cf8 50%, #c084fc 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    display: block; margin-bottom: 2px;
+}
+.sidebar-logo .logo-ver {
+    font-size: 0.70rem; color: #6366f1 !important;
+    letter-spacing: 0.08em; text-transform: uppercase;
+}
 
-    [data-testid="metric-container"] {
-        background:#ffffff; border-radius:14px; padding:20px 16px;
-        border:1px solid #e2e8f0; box-shadow:0 1px 4px rgba(0,0,0,0.05); transition:box-shadow 0.2s;
-    }
-    [data-testid="metric-container"]:hover { box-shadow:0 4px 16px rgba(0,0,0,0.08); }
-    [data-testid="stMetricLabel"] { color:#64748b !important; font-size:0.82rem !important; }
-    [data-testid="stMetricValue"] { color:#0f172a !important; font-weight:700 !important; }
+/* Sidebar nav label */
+.nav-label {
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #6366f1 !important;
+    padding: 0 16px; margin: 8px 0 4px;
+}
 
-    .stTextInput > div > div > input, .stNumberInput > div > div > input, .stSelectbox > div > div {
-        border-radius:9px !important; border:1.5px solid #e2e8f0 !important;
-        background:#ffffff !important; font-size:0.9rem;
-    }
-    hr { border-color:#f1f5f9 !important; margin:1.5rem 0 !important; }
-    [data-testid="stForm"] {
-        background:#ffffff; border-radius:16px; padding:28px !important;
-        border:1px solid #e2e8f0; box-shadow:0 2px 8px rgba(0,0,0,0.05);
-    }
-    .stDataEditor { border-radius:12px !important; overflow:hidden; border:1px solid #e2e8f0 !important; }
-    .stProgress > div > div > div > div {
-        background:linear-gradient(90deg,#0ea5e9,#6366f1) !important; border-radius:99px;
-    }
-    [data-testid="stAlert"] { border-radius:10px !important; border-width:1px !important; }
-    .footer-bar {
-        text-align:center; padding:20px; color:#94a3b8; font-size:0.8rem;
-        margin-top:40px; border-top:1px solid #f1f5f9;
-    }
-    .footer-bar strong { color:#64748b; font-weight:600; }
-    ::-webkit-scrollbar { width:6px; height:6px; }
-    ::-webkit-scrollbar-track { background:#f8fafc; }
-    ::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:99px; }
+/* ═══════════════════════════════════════════
+   MAIN HEADER
+═══════════════════════════════════════════ */
+.ts-header {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    border-radius: 18px;
+    padding: 24px 28px;
+    margin-bottom: 24px;
+    box-shadow: 0 8px 32px rgba(79,70,229,0.25);
+    display: flex; align-items: center; gap: 16px;
+}
+.ts-header-icon { font-size: 2.4rem; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.2)); }
+.ts-header-title {
+    font-size: 1.8rem; font-weight: 700; color: #ffffff !important;
+    letter-spacing: -0.02em; margin: 0; line-height: 1.2;
+}
+.ts-header-sub { font-size: 0.82rem; color: rgba(255,255,255,0.7); margin: 4px 0 0; }
+.ts-badge {
+    background: rgba(255,255,255,0.15); color: #e0e7ff !important;
+    font-size: 0.68rem; font-weight: 700; padding: 3px 10px;
+    border-radius: 99px; letter-spacing: 0.08em;
+    border: 1px solid rgba(255,255,255,0.2);
+    white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════
+   METRIC CARDS
+═══════════════════════════════════════════ */
+[data-testid="metric-container"] {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 20px 18px !important;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+[data-testid="metric-container"]::before {
+    content: '';
+    position: absolute; top: 0; left: 0;
+    width: 4px; height: 100%;
+    background: linear-gradient(180deg, #6366f1, #818cf8);
+    border-radius: 0;
+}
+[data-testid="metric-container"]:hover {
+    box-shadow: 0 8px 24px rgba(99,102,241,0.12);
+    transform: translateY(-2px);
+    border-color: #c7d2fe;
+}
+[data-testid="stMetricLabel"] { color: #64748b !important; font-size: 0.80rem !important; font-weight: 500 !important; }
+[data-testid="stMetricValue"] { color: #1e1b4b !important; font-weight: 700 !important; }
+
+/* ═══════════════════════════════════════════
+   BUTTONS
+═══════════════════════════════════════════ */
+.stButton > button {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    font-size: 0.87rem !important;
+    min-height: 42px !important;
+    transition: all 0.18s cubic-bezier(.4,0,.2,1) !important;
+    border: 1.5px solid #e2e8f0 !important;
+    background: #ffffff !important;
+    color: #374151 !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+}
+.stButton > button:hover {
+    border-color: #c7d2fe !important;
+    box-shadow: 0 4px 14px rgba(99,102,241,0.15) !important;
+    transform: translateY(-1px) !important;
+    color: #1e1b4b !important;
+}
+.stButton > button:active { transform: translateY(0) !important; }
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 4px 14px rgba(79,70,229,0.35) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    box-shadow: 0 8px 24px rgba(79,70,229,0.45) !important;
+    transform: translateY(-2px) !important;
+    color: #ffffff !important;
+}
+
+/* ═══════════════════════════════════════════
+   INPUTS
+═══════════════════════════════════════════ */
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stTextArea > div > textarea {
+    border-radius: 10px !important;
+    border: 1.5px solid #e2e8f0 !important;
+    background: #ffffff !important;
+    font-size: 0.9rem !important;
+    transition: border-color 0.15s, box-shadow 0.15s !important;
+    padding: 10px 14px !important;
+}
+.stTextInput > div > div > input:focus,
+.stNumberInput > div > div > input:focus,
+.stTextArea > div > textarea:focus {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.15) !important;
+}
+.stSelectbox > div > div,
+.stMultiSelect > div > div {
+    border-radius: 10px !important;
+    border: 1.5px solid #e2e8f0 !important;
+    background: #ffffff !important;
+}
+label, .stCheckbox label p, .stToggle label p {
+    color: #374151 !important;
+    font-size: 0.87rem !important;
+    font-weight: 500 !important;
+}
+
+/* ═══════════════════════════════════════════
+   FORM / CARD
+═══════════════════════════════════════════ */
+[data-testid="stForm"] {
+    background: #ffffff !important;
+    border-radius: 18px !important;
+    padding: 28px !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
+}
+
+/* Section card */
+.ts-section {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 20px 22px;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    margin-bottom: 16px;
+}
+.ts-section-title {
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #6366f1; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+}
+
+/* ═══════════════════════════════════════════
+   RESULT CARDS
+═══════════════════════════════════════════ */
+.dup-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    transition: all 0.18s ease;
+    display: flex; align-items: center; gap: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.dup-card:hover {
+    border-color: #c7d2fe;
+    box-shadow: 0 4px 16px rgba(99,102,241,0.10);
+    transform: translateX(-2px);
+}
+.dup-card-icon {
+    font-size: 1.6rem; min-width: 36px; text-align: center;
+    background: #f0f0fe; border-radius: 10px; padding: 8px;
+}
+.dup-card-body { flex: 1; min-width: 0; }
+.dup-card-name { font-weight: 600; color: #1e1b4b; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dup-card-meta { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+.dup-badge {
+    font-size: 0.68rem; font-weight: 700; padding: 3px 9px;
+    border-radius: 99px; white-space: nowrap;
+}
+.badge-fileid  { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.badge-md5     { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.badge-phash   { background: #fefce8; color: #854d0e; border: 1px solid #fde68a; }
+.badge-exact   { background: #f0f0fe; color: #4338ca; border: 1px solid #c7d2fe; }
+
+/* Alert / warning banner */
+.ts-alert-warn {
+    background: linear-gradient(135deg, #fff7ed, #fef3c7);
+    border: 1px solid #fcd34d;
+    border-radius: 12px;
+    padding: 12px 18px;
+    margin-bottom: 16px;
+    display: flex; align-items: center; gap: 10px;
+}
+.ts-alert-ok {
+    background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+    border: 1px solid #86efac;
+    border-radius: 12px;
+    padding: 12px 18px;
+    margin-bottom: 16px;
+}
+
+/* ═══════════════════════════════════════════
+   PROGRESS
+═══════════════════════════════════════════ */
+.stProgress > div > div > div > div {
+    background: linear-gradient(90deg, #6366f1, #8b5cf6, #c084fc) !important;
+    border-radius: 99px !important;
+    animation: shimmer 2s infinite linear;
+}
+@keyframes shimmer {
+    0%   { background-position: -200% center; }
+    100% { background-position:  200% center; }
+}
+
+/* ═══════════════════════════════════════════
+   DATA TABLE
+═══════════════════════════════════════════ */
+.stDataEditor {
+    border-radius: 14px !important;
+    overflow: hidden !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.04) !important;
+}
+
+/* ═══════════════════════════════════════════
+   TABS
+═══════════════════════════════════════════ */
+.stTabs [data-baseweb="tab-list"] {
+    background: #f1f5f9 !important;
+    border-radius: 12px !important;
+    padding: 4px !important;
+    gap: 4px !important;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 9px !important;
+    font-weight: 600 !important;
+    font-size: 0.86rem !important;
+    color: #64748b !important;
+}
+.stTabs [aria-selected="true"] {
+    background: #ffffff !important;
+    color: #4f46e5 !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08) !important;
+}
+
+/* ═══════════════════════════════════════════
+   EXPANDER
+═══════════════════════════════════════════ */
+[data-testid="stExpander"] {
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
+}
+[data-testid="stExpander"] summary {
+    font-weight: 600 !important;
+    color: #374151 !important;
+    background: #f8fafc !important;
+    padding: 12px 16px !important;
+}
+
+/* ═══════════════════════════════════════════
+   MISC
+═══════════════════════════════════════════ */
+hr { border-color: #f1f5f9 !important; margin: 1.2rem 0 !important; }
+[data-testid="stAlert"] { border-radius: 12px !important; }
+h1,h2,h3 { color: #1e1b4b !important; }
+h2 { font-size: 1.1rem !important; }
+h3 { font-size: 1rem !important; }
+
+.footer-bar {
+    text-align: center; padding: 20px; color: #94a3b8;
+    font-size: 0.78rem; margin-top: 40px;
+    border-top: 1px solid #e2e8f0;
+}
+.footer-bar strong { color: #6366f1; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #818cf8; }
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .main .block-container { padding: 1rem 0.8rem !important; }
+    .ts-header { padding: 16px 18px; gap: 12px; }
+    .ts-header-title { font-size: 1.4rem; }
+    [data-testid="metric-container"] { padding: 14px 12px !important; }
+    .dup-card { padding: 10px 12px; gap: 10px; }
+}
 </style>
 """)
 
@@ -563,8 +845,8 @@ for k, v in defaults.items():
 with st.sidebar:
     st.html("""
     <div class='sidebar-logo'>
-        <div class='logo-icon'>✂️</div>
-        <div class='logo-name'>DupZap</div>
+        <div class='logo-icon'>🧹</div>
+        <div class='logo-name'>TeleSweep</div>
         <div class='logo-ver'>v5.0 · Telegram</div>
     </div>
     """)
@@ -620,16 +902,15 @@ with st.sidebar:
 
 # ================== المحتوى الرئيسي ==================
 st.html("""
-<div style="padding:8px 0 24px;">
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
-    <span style="font-size:2rem;">✂️</span>
-    <span style="font-size:1.9rem;font-weight:700;color:#0f172a;letter-spacing:-0.02em;">DupZap</span>
-    <span style="background:#f1f5f9;color:#64748b;font-size:0.72rem;font-weight:600;
-                 padding:3px 10px;border-radius:99px;letter-spacing:0.04em;margin-top:4px;">v5.0</span>
+<div class="ts-header">
+  <div class="ts-header-icon">🧹</div>
+  <div style="flex:1;">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span class="ts-header-title">TeleSweep</span>
+      <span class="ts-badge">v5.0</span>
+    </div>
+    <p class="ts-header-sub">كشف وإزالة المكررات · File ID · MD5 · pHash · Exact Video Match</p>
   </div>
-  <p style="color:#64748b;font-size:0.88rem;margin:0;">
-    كشف المكررات عبر: File ID · MD5 · pHash · Exact Video Match
-  </p>
 </div>
 """)
 
@@ -843,16 +1124,17 @@ elif st.session_state.step == 'channel':
         st.markdown("**📦 هامش الحجم (%)**")
         size_tolerance_percent = st.radio(
             "اختر النسبة المئوية للفرق المسموح به في حجم الملف:",
-            options=[0.0, 0.1, 0.25, 0.5, 1.0],
-            index=3,  # افتراضي 0.5
+            options=[0.0, 0.01, 0.1, 0.25, 0.5, 1.0],
+            index=4,  # افتراضي 0.5
             format_func=lambda x: (
-                f"{x}% - تطابق تام" if x == 0.0 else
+                f"{x}% - تطابق تام (byte-perfect)" if x == 0.0 else
+                f"{x}% - شبه تام (metadata فقط)" if x == 0.01 else
                 f"{x}% - شبه تام" if x == 0.1 else
                 f"{x}% - دقيق جداً" if x == 0.25 else
                 f"{x}% - دقة عالية (موصى به)" if x == 0.5 else
                 f"{x}% - دقة متوسطة (قد يلتقط مكررات أكثر)"
             ),
-            help="القيمة الافتراضية 0.5% مناسبة جداً. كلما زادت النسبة زاد احتمال الإيجابيات الكاذبة."
+            help="القيمة 0.01% تكتشف نفس الملف حتى مع اختلافات metadata الضئيلة جداً."
         )
 
     st.markdown("---")
@@ -903,7 +1185,16 @@ elif st.session_state.step == 'scanning':
     params  = st.session_state.scan_params
     channel = st.session_state.channel
 
-    st.subheader(f"📡 مسح: {getattr(channel, 'title', str(channel.id))}")
+    channel_title = getattr(channel, 'title', str(channel.id))
+    st.html(f"""
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <span style="font-size:1.4rem;">📡</span>
+      <div>
+        <div style="font-size:1.1rem;font-weight:700;color:#1e1b4b;">مسح القناة</div>
+        <div style="font-size:0.82rem;color:#6366f1;font-weight:600;">{channel_title}</div>
+      </div>
+    </div>
+    """)
 
     col1, col2, col3 = st.columns(3)
     with col1: st.metric("📊 تم فحص", st.session_state.total_scanned)
@@ -1024,7 +1315,16 @@ elif st.session_state.step == 'results':
         size_tolerance_percent=params.get('size_tolerance_percent', 0.5),
     )
 
-    st.html(f"<h3 style='margin:0 0 16px;color:#0f172a;'>📋 {getattr(channel, 'title', str(channel.id))}</h3>")
+    channel_title = getattr(channel, 'title', str(channel.id))
+    st.html(f"""
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+      <span style="font-size:1.4rem;">📋</span>
+      <div>
+        <div style="font-size:1.1rem;font-weight:700;color:#1e1b4b;">نتائج الفحص</div>
+        <div style="font-size:0.82rem;color:#6366f1;font-weight:600;">{channel_title}</div>
+      </div>
+    </div>
+    """)
 
     if st.session_state.last_deleted_count > 0:
         st.success(f"✅ تم حذف {st.session_state.last_deleted_count} رسالة بنجاح من تيليجرام وقاعدة البيانات")
@@ -1042,20 +1342,25 @@ elif st.session_state.step == 'results':
             type_counts[mt] = type_counts.get(mt, 0) + 1
 
         badge_map = {
-            "file_id": "🔗 File ID (Forward)",
-            "md5":     "🔐 MD5",
-            "phash":   "🖼️ pHash",
+            "file_id":     "🔗 File ID",
+            "md5":         "🔐 MD5",
+            "phash":       "🖼️ pHash",
             "exact_video": "🎬 Exact Video",
         }
-        summary = " · ".join(f"{badge_map.get(k,k)}: {v}" for k, v in type_counts.items())
+        summary_parts = " · ".join(
+            f"<span style='color:#4338ca;font-weight:700;'>{badge_map.get(k,k)}</span>: {v}"
+            for k, v in type_counts.items()
+        )
 
         st.html(f"""
-        <div style="display:inline-flex;align-items:center;gap:8px;background:#fff7ed;
-                    border:1px solid #fed7aa;border-radius:10px;padding:10px 16px;margin-bottom:16px;">
-          <span style="font-size:1.1rem;">⚠️</span>
-          <span style="color:#c2410c;font-weight:600;font-size:0.95rem;">
-            {len(duplicates)} رسالة مكررة — {summary}
-          </span>
+        <div class="ts-alert-warn">
+          <span style="font-size:1.4rem;">⚠️</span>
+          <div>
+            <div style="font-weight:700;color:#92400e;font-size:0.95rem;">
+              {len(duplicates)} ملف مكرر بحاجة للمراجعة
+            </div>
+            <div style="font-size:0.78rem;color:#b45309;margin-top:2px;">{summary_parts}</div>
+          </div>
         </div>
         """)
 
@@ -1063,6 +1368,31 @@ elif st.session_state.step == 'results':
         total_pages = max(1, (len(duplicates) + PAGE_SIZE - 1) // PAGE_SIZE)
         page_dups   = duplicates[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
+        # ── Card view للمكررات ──
+        type_icon = {"video": "🎬", "photo": "🖼️", "image": "🖼️", "document": "📄"}
+        badge_cls = {"file_id": "badge-fileid", "md5": "badge-md5", "phash": "badge-phash", "exact_video": "badge-exact"}
+        badge_lbl = {"file_id": "🔗 Forward", "md5": "🔐 MD5", "phash": "🖼️ pHash", "exact_video": "🎬 Exact"}
+
+        cards_html = ""
+        for d in page_dups:
+            icon  = type_icon.get(d['type'], "📁")
+            bc    = badge_cls.get(d.get('match_type','file_id'), 'badge-fileid')
+            bl    = badge_lbl.get(d.get('match_type','file_id'), '🔗')
+            name  = (d.get('name') or f"رسالة #{d['id']}")
+            if len(name) > 35: name = name[:35] + "…"
+            dur   = f" · {d['duration']}ث" if d.get('duration') else ""
+            cards_html += f"""
+            <div class="dup-card" id="card-{d['id']}">
+              <div class="dup-card-icon">{icon}</div>
+              <div class="dup-card-body">
+                <div class="dup-card-name">{name}</div>
+                <div class="dup-card-meta">{fmt_size(d['size'])}{dur} · {d['date'][:10]} · أصل: #{d['keeper_id']}</div>
+              </div>
+              <span class="dup-badge {bc}">{bl}</span>
+            </div>"""
+        st.html(cards_html)
+
+        # ── Editable table للتحديد ──
         badge_short = {"file_id": "🔗 Forward", "md5": "🔐 MD5", "phash": "🖼️ pHash", "exact_video": "🎬 Exact"}
         df = pd.DataFrame([
             {
@@ -1245,5 +1575,5 @@ elif st.session_state.step == 'results':
     db.close()
 
 st.markdown("---")
-st.markdown("<div class='footer-bar'>صُنع بعناية بواسطة <strong>F.ALSALEH</strong> · DupZap v5.0</div>",
+st.markdown("<div class='footer-bar'>صُنع بعناية بواسطة <strong>F.ALSALEH</strong> · TeleSweep v5.0</div>",
             unsafe_allow_html=True)
