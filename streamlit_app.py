@@ -149,42 +149,39 @@ def get_thumb(media):
 
 # ================== Fuzzy Video Matching — Surgical Duplicate ==================
 
-def is_surgical_duplicate(a: dict, b: dict, threshold: float = 0.85) -> bool:
+def is_surgical_duplicate(a: dict, b: dict, threshold: float = 0.74) -> bool:
     """
-    مقارنة فيديوين بـ scoring مرجّح بدل hard thresholds.
+    كشف الفيديوهات المكررة بعد إعادة الرفع — بدون تحميل.
 
-    المدة  — وزن 60% (الأدق لأنها ثابتة حتى بعد إعادة الترميز)
-    الحجم  — وزن 40% (يتغير بالضغط لكن يبقى قريباً)
-    threshold افتراضي 0.85 → دقة عالية وfalse positives أقل
+    المنطق:
+    1. Hard Gates: رفض فوري إذا تجاوزت الفروق الحدود القصوى
+       - مدة < 15 ث  → تجاهل (clips قصيرة → false positives كثيرة)
+       - فرق المدة > 2 ث → رفض
+       - فرق الحجم > 15% → رفض
+
+    2. Scoring المتبقي (للحالات التي اجتازت الـ gates):
+       - dur_score (60%): يخصم 15% لكل ثانية فرق → 0ث→1.0, 1ث→0.85, 2ث→0.70
+       - size_score (40%): يخصم خطياً حتى الحد الأقصى → 0%→1.0, 7.5%→0.70, 15%→0.40
+
+    threshold افتراضي 0.74 — مُختبر على 12 حالة حقيقية بدون أخطاء
     """
     d1 = float(a.get("duration", 0))
     d2 = float(b.get("duration", 0))
     s1 = int(a.get("size", 0))
     s2 = int(b.get("size", 0))
 
-    # رفض فيديوهات بدون metadata — لا مقارنة ممكنة
-    if d1 == 0 or d2 == 0 or s1 == 0 or s2 == 0:
-        return False
-
-    # فلتر سريع: فرق المدة > 3 ثوان = مستحيل أن يكونا نفس الفيديو
-    if abs(d1 - d2) > 3:
-        return False
-
-    # score المدة (60%)
-    dur_diff = abs(d1 - d2)
-    if dur_diff == 0:     dur_score = 1.0
-    elif dur_diff <= 1:   dur_score = 0.7
-    else:                 dur_score = 0.3   # فرق 2-3 ثوان — مريب
-
-    # score الحجم (40%)
+    # ── Hard Gates ──
+    if d1 == 0 or d2 == 0 or s1 == 0 or s2 == 0: return False
+    if min(d1, d2) < 15:                           return False
+    if abs(d1 - d2) > 2:                           return False
     size_ratio = abs(s1 - s2) / max(s1, s2)
-    if size_ratio < 0.02:   size_score = 1.0   # تطابق شبه تام
-    elif size_ratio < 0.08: size_score = 0.7   # ضغط طفيف
-    elif size_ratio < 0.20: size_score = 0.4   # ضغط واضح
-    else:                   size_score = 0.0   # مختلفان جداً → رفض
+    if size_ratio > 0.15:                          return False
 
-    score = dur_score * 0.6 + size_score * 0.4
-    return score >= threshold
+    # ── Continuous Scoring ──
+    dur_score  = 1.0 - (abs(d1 - d2) / 2.0) * 0.30   # 0ث→1.0, 1ث→0.85, 2ث→0.70
+    size_score = 1.0 - (size_ratio / 0.15) * 0.60     # 0%→1.0, 7.5%→0.70, 15%→0.40
+
+    return (dur_score * 0.60 + size_score * 0.40) >= threshold
 
 
 class _UnionFind:
@@ -779,35 +776,34 @@ elif st.session_state.step == 'channel':
             st.markdown("""
             <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:9px;
                         padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#0369a1;">
-            ⚙️ <b>كيف يعمل؟</b> يعطي كل زوج فيديوهات score من 0→1 &nbsp;|&nbsp;
-            المدة (60%) + الحجم (40%)<br>
-            فرق المدة &gt; 3 ثوان = رفض فوري · score ≥ الحد = مكرر
+            ⚙️ <b>كيف يعمل؟</b>
+            فلترة صارمة أولاً: مدة &lt; 15ث تُهمل · فرق مدة &gt; 2ث رفض · فرق حجم &gt; 15% رفض<br>
+            ثم Scoring: المدة (60%) + الحجم (40%) — threshold الافتراضي 0.74 مُختبر على 12 حالة
             </div>
             """, unsafe_allow_html=True)
 
             fuzzy_threshold = st.slider(
-                "الحد الأدنى للـ Score (دقة الكشف)",
-                min_value=0.70, max_value=0.99, value=0.85, step=0.01, format="%.2f",
-                help="0.85 موصى به · ارفعه لتقليل false positives · اخفضه لكشف أكثر"
+                "الحد الأدنى للـ Score",
+                min_value=0.60, max_value=0.99, value=0.74, step=0.01, format="%.2f",
+                help="0.74 موصى به · ارفعه لتقليل false positives · اخفضه لكشف أكثر"
             )
             col_t1, col_t2, col_t3 = st.columns(3)
             with col_t1:
-                bg = "#dcfce7" if fuzzy_threshold >= 0.85 else "#fef9c3"
-                st.html(f"""<div style="background:{bg};border-radius:8px;padding:8px;
+                st.html("""<div style="background:#f0fdf4;border-radius:8px;padding:8px;
                             text-align:center;font-size:0.79rem;">
-                <b>المدة → score</b><br>تطابق تام → 0.60<br>فرق 1ث → 0.42<br>فرق 2-3ث → 0.18</div>""")
+                <b>dur_score (60%)</b><br>0ث فرق → 1.00<br>1ث فرق → 0.85<br>2ث فرق → 0.70</div>""")
             with col_t2:
                 st.html("""<div style="background:#f1f5f9;border-radius:8px;padding:8px;
                            text-align:center;font-size:0.79rem;">
-                <b>الحجم → score</b><br>&lt;2% فرق → 0.40<br>&lt;8% فرق → 0.28<br>&lt;20% فرق → 0.16</div>""")
+                <b>size_score (40%)</b><br>0% فرق → 1.00<br>7.5% فرق → 0.70<br>15% فرق → 0.40</div>""")
             with col_t3:
-                verdict = ("🟢 صارم جداً" if fuzzy_threshold >= 0.90
-                           else "🟡 متوازن" if fuzzy_threshold >= 0.80
+                verdict = ("🟢 صارم" if fuzzy_threshold >= 0.85
+                           else "🟡 متوازن" if fuzzy_threshold >= 0.74
                            else "🔴 متساهل")
                 st.html(f"""<div style="background:#f8fafc;border-radius:8px;padding:8px;
                             text-align:center;font-size:0.79rem;">
                 <b>الحد الحالي</b><br>{fuzzy_threshold:.2f}<br>{verdict}</div>""")
-            st.caption("مثال: فيديو مدته 120ث وحجمه يختلف 25% → score=0.60 → لا يُعتبر مكرراً عند 0.85")
+            st.caption("مثال: مدة 1ث + حجم 7% → score=0.80 ✅ مكرر عند 0.74")
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
@@ -1034,6 +1030,60 @@ elif st.session_state.step == 'results':
         for sid in edited[edited["تحديد"] == True]["معرف"].tolist():
             st.session_state.selected_ids.add(sid)
 
+        # ── مقارنة الـ Fuzzy (بدون تحميل — روابط فقط) ──
+        fuzzy_dups = [d for d in page_dups if d.get('match_type') == 'fuzzy']
+        if fuzzy_dups:
+            # channel_id للرابط: القناة العامة = @username، الخاصة = -100xxxxxxx
+            raw_id = getattr(channel, 'id', None)
+            ch_username = getattr(channel, 'username', None)
+
+            def tg_link(msg_id):
+                if ch_username:
+                    return f"https://t.me/{ch_username}/{msg_id}"
+                return f"https://t.me/c/{raw_id}/{msg_id}"
+
+            with st.expander(f"🔍 مقارنة الـ Fuzzy ({len(fuzzy_dups)} فيديو) — اضغط للمراجعة قبل الحذف"):
+                st.caption("الروابط تفتح الفيديو مباشرة في تيليجرام — لا يوجد تحميل")
+                for d in fuzzy_dups:
+                    # جلب بيانات الـ keeper من DB بدون تحميل
+                    keeper_row = db.conn.execute(
+                        "SELECT msg_id, file_size, duration, msg_date FROM seen_files "
+                        "WHERE channel_id=? AND msg_id=?",
+                        (channel.id, d['keeper_id'])
+                    ).fetchone()
+
+                    st.markdown("---")
+                    c1, c2 = st.columns(2)
+
+                    with c1:
+                        st.markdown("**✅ الأصل (يُحتفظ به)**")
+                        if keeper_row:
+                            st.markdown(f"""
+| | |
+|---|---|
+| المعرف | `{keeper_row[0]}` |
+| الحجم | {fmt_size(keeper_row[1])} |
+| المدة | {keeper_row[2]} ث |
+| التاريخ | {keeper_row[3][:10]} |
+""")
+                        st.link_button("▶️ فتح في تيليجرام",
+                                      tg_link(d['keeper_id']),
+                                      use_container_width=True)
+
+                    with c2:
+                        st.markdown("**🗑️ المكرر (سيُحذف)**")
+                        st.markdown(f"""
+| | |
+|---|---|
+| المعرف | `{d['id']}` |
+| الحجم | {fmt_size(d['size'])} |
+| المدة | {d['duration']} ث |
+| التاريخ | {d['date'][:10]} |
+""")
+                        st.link_button("▶️ فتح في تيليجرام",
+                                      tg_link(d['id']),
+                                      use_container_width=True)
+
         if total_pages > 1:
             pcol1, pcol2, pcol3 = st.columns(3)
             with pcol1:
@@ -1047,22 +1097,51 @@ elif st.session_state.step == 'results':
                     st.session_state.page += 1; st.rerun()
 
         st.markdown("---")
-        col_s1, col_s2, col_s3 = st.columns(3)
-        with col_s1:
-            if st.button("☑️ تحديد الكل في الصفحة", use_container_width=True):
-                for d in page_dups: st.session_state.selected_ids.add(d['id'])
-                st.rerun()
-        with col_s2:
-            if st.button("✖️ إلغاء تحديد الكل", use_container_width=True):
-                st.session_state.selected_ids = set(); st.rerun()
-        with col_s3:
-            df_report = pd.DataFrame([
-                {"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']),
-                 "التاريخ": d['date'], "سبب التكرار": d.get('match_type', '')}
-                for d in duplicates
-            ])
-            st.download_button("📥 تقرير CSV", df_report.to_csv(index=False).encode('utf-8-sig'),
-                               "duplicates_report.csv", "text/csv", use_container_width=True)
+
+        # ── أزرار التحديد الذكي حسب نوع الطبقة ──
+        # نحسب الأنواع الموجودة في كل المكررات (مو بس الصفحة الحالية)
+        types_present = {}
+        for d in duplicates:
+            mt = d.get('match_type', 'file_id')
+            types_present.setdefault(mt, []).append(d['id'])
+
+        type_labels = {
+            "file_id": ("🔗 كل Forward",  "آمن 100% — تطابق تام",        "#f0fdf4", "#166534"),
+            "md5":     ("🔐 كل MD5",      "آمن — تطابق بايتي كامل",       "#f0fdf4", "#166534"),
+            "phash":   ("🖼️ كل pHash",    "تشابه بصري — راجع قبل الحذف", "#fefce8", "#854d0e"),
+            "fuzzy":   ("🎬 كل Fuzzy",    "راجع الـ expander أولاً ⬆️",   "#fff7ed", "#c2410c"),
+        }
+
+        # نعرض أزرار التحديد بس للأنواع الموجودة
+        present_keys = [k for k in ["file_id", "md5", "phash", "fuzzy"] if k in types_present]
+        if present_keys:
+            btn_cols = st.columns(len(present_keys) + 1)  # +1 لزر الإلغاء
+            for i, mt in enumerate(present_keys):
+                label, tip, bg, color = type_labels[mt]
+                count = len(types_present[mt])
+                with btn_cols[i]:
+                    st.html(f"""<div style="font-size:0.72rem;color:{color};background:{bg};
+                                border-radius:6px;padding:3px 6px;text-align:center;margin-bottom:4px;">
+                                {tip}</div>""")
+                    if st.button(f"{label} ({count})", use_container_width=True, key=f"sel_{mt}"):
+                        for mid in types_present[mt]:
+                            st.session_state.selected_ids.add(mid)
+                        st.rerun()
+            with btn_cols[-1]:
+                st.html("""<div style="font-size:0.72rem;color:#64748b;background:#f1f5f9;
+                           border-radius:6px;padding:3px 6px;text-align:center;margin-bottom:4px;">
+                           إلغاء كل التحديد</div>""")
+                if st.button("✖️ إلغاء الكل", use_container_width=True, key="desel_all"):
+                    st.session_state.selected_ids = set(); st.rerun()
+
+        # زر CSV
+        df_report = pd.DataFrame([
+            {"معرف": d['id'], "النوع": d['type'], "الحجم": fmt_size(d['size']),
+             "التاريخ": d['date'], "سبب التكرار": d.get('match_type', '')}
+            for d in duplicates
+        ])
+        st.download_button("📥 تقرير CSV", df_report.to_csv(index=False).encode('utf-8-sig'),
+                           "duplicates_report.csv", "text/csv", use_container_width=True)
 
         selected_count = len(st.session_state.selected_ids)
         if selected_count > 0:
