@@ -739,29 +739,32 @@ elif st.session_state.step == 'verify_code':
         except Exception as e:
             st.error(f"خطأ: {e}")
 
-# ---------- إعدادات القناة ----------
+# ---------- إعدادات القناة (مع إصلاح خطأ client) ----------
 elif st.session_state.step == 'channel':
     st.success("✅ تم تسجيل الدخول")
     
     # --- جلب قائمة القنوات ---
     if st.button("📋 جلب قنواتي ومجموعاتي", use_container_width=True):
-        with st.spinner("جاري جلب القنوات والمجموعات..."):
-            try:
-                async def fetch_dialogs():
-                    dialogs = await st.session_state.client.get_dialogs()
-                    channels = []
-                    for d in dialogs:
-                        if d.is_channel or d.is_group:
-                            channels.append({
-                                "name": d.name,
-                                "id": d.id,
-                                "entity": d.entity
-                            })
-                    return channels
-                st.session_state.my_channels = run_sync(fetch_dialogs())
-                st.success(f"تم جلب {len(st.session_state.my_channels)} قناة/مجموعة")
-            except Exception as e:
-                st.error(f"خطأ في جلب القنوات: {e}")
+        if 'client' not in st.session_state or st.session_state.client is None:
+            st.error("❌ لم يتم تسجيل الدخول بعد. الرجاء تسجيل الدخول أولاً.")
+        else:
+            with st.spinner("جاري جلب القنوات والمجموعات..."):
+                try:
+                    async def fetch_dialogs():
+                        dialogs = await st.session_state.client.get_dialogs()
+                        channels = []
+                        for d in dialogs:
+                            if d.is_channel or d.is_group:
+                                channels.append({
+                                    "name": d.name,
+                                    "id": d.id,
+                                    "entity": d.entity
+                                })
+                        return channels
+                    st.session_state.my_channels = run_sync(fetch_dialogs())
+                    st.success(f"✅ تم جلب {len(st.session_state.my_channels)} قناة/مجموعة")
+                except Exception as e:
+                    st.error(f"خطأ في جلب القنوات: {e}")
 
     channel_input = None
     if st.session_state.my_channels:
