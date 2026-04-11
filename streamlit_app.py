@@ -147,44 +147,28 @@ def get_thumb(media):
         if doc and doc.thumbs: return min(doc.thumbs, key=lambda t: getattr(t, 'size', 0))
     return None
 
-# ================== Fuzzy Video Matching — Surgical Duplicate ==================
+# ================== Exact Video Matching ==================
 
-def is_surgical_duplicate(a: dict, b: dict, threshold: float = 0.85) -> bool:
+def is_exact_video_duplicate(a: dict, b: dict) -> bool:
     """
-    مقارنة فيديوين بـ scoring مرجّح بدل hard thresholds.
-
-    المدة  — وزن 60% (الأدق لأنها ثابتة حتى بعد إعادة الترميز)
-    الحجم  — وزن 40% (يتغير بالضغط لكن يبقى قريباً)
-    threshold افتراضي 0.85 → دقة عالية وfalse positives أقل
+    تطابق صارم للفيديوهات: نفس المدة، نفس الحجم، نفس الأبعاد.
+    إذا كانت الأبعاد غير متوفرة (0) فلا تطابق إلا مع فيديو آخر بدون أبعاد.
     """
     d1 = float(a.get("duration", 0))
     d2 = float(b.get("duration", 0))
     s1 = int(a.get("size", 0))
     s2 = int(b.get("size", 0))
+    w1 = int(a.get("width", 0))
+    h1 = int(a.get("height", 0))
+    w2 = int(b.get("width", 0))
+    h2 = int(b.get("height", 0))
 
-    # رفض فيديوهات بدون metadata — لا مقارنة ممكنة
+    # يجب أن تتوفر بيانات أساسية
     if d1 == 0 or d2 == 0 or s1 == 0 or s2 == 0:
         return False
 
-    # فلتر سريع: فرق المدة > 3 ثوان = مستحيل أن يكونا نفس الفيديو
-    if abs(d1 - d2) > 3:
-        return False
-
-    # score المدة (60%)
-    dur_diff = abs(d1 - d2)
-    if dur_diff == 0:     dur_score = 1.0
-    elif dur_diff <= 1:   dur_score = 0.7
-    else:                 dur_score = 0.3   # فرق 2-3 ثوان — مريب
-
-    # score الحجم (40%)
-    size_ratio = abs(s1 - s2) / max(s1, s2)
-    if size_ratio < 0.02:   size_score = 1.0   # تطابق شبه تام
-    elif size_ratio < 0.08: size_score = 0.7   # ضغط طفيف
-    elif size_ratio < 0.20: size_score = 0.4   # ضغط واضح
-    else:                   size_score = 0.0   # مختلفان جداً → رفض
-
-    score = dur_score * 0.6 + size_score * 0.4
-    return score >= threshold
+    # تطابق المدة (بالثواني) والحجم (بالبايت) والأبعاد (بالـ pixel)
+    return (d1 == d2) and (s1 == s2) and (w1 == w2) and (h1 == h2)
 
 
 class _UnionFind:
@@ -257,7 +241,7 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
 
     info = {
         "id": msg.id, "file_id": None,
-        "size": 0, "duration": 0,
+        "size": 0, "duration": 0, "width": 0, "height": 0,
         "mime": "", "type": "", "date": msg.date.isoformat(),
         "md5": None, "phash": None, "views": msg.views or 0, "name": None
     }
@@ -271,7 +255,10 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
                            else "image" if info["mime"].startswith("image/")
                            else "document")
         for attr in doc.attributes:
-            if isinstance(attr, DocumentAttributeVideo): info["duration"] = attr.duration or 0
+            if isinstance(attr, DocumentAttributeVideo):
+                info["duration"] = attr.duration or 0
+                info["width"]    = attr.w or 0
+                info["height"]   = attr.h or 0
             if hasattr(attr, 'file_name'): info["name"] = attr.file_name
 
     elif isinstance(media, MessageMediaPhoto):
@@ -280,7 +267,13 @@ async def extract_file_info_async(client, msg, compute_md5: bool, compute_phash:
         info["type"]    = "photo"
         info["mime"]    = "image/jpeg"
         sizes = [s for s in getattr(photo, "sizes", []) if hasattr(s, "size") and s.size > 0]
-        info["size"] = max(sizes, key=lambda s: s.size).size if sizes else 0
+        if sizes:
+            largest = max(sizes, key=lambda s: s.size)
+            info["size"]   = largest.size
+            info["width"]  = getattr(largest, 'w', 0) or 0
+            info["height"] = getattr(largest, 'h', 0) or 0
+        else:
+            info["size"] = 0
     else:
         return None
 
@@ -322,11 +315,22 @@ class Database:
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_files (
                 channel_id INTEGER, msg_id INTEGER, file_id TEXT,
-                file_size INTEGER, duration INTEGER, md5_hash TEXT, phash TEXT,
+                file_size INTEGER, duration INTEGER, width INTEGER DEFAULT 0, height INTEGER DEFAULT 0,
+                md5_hash TEXT, phash TEXT,
                 msg_date TEXT, file_type TEXT, mime_type TEXT, views INTEGER, file_name TEXT,
                 PRIMARY KEY (channel_id, msg_id)
             ) WITHOUT ROWID
         """)
+        # إضافة الأعمدة width, height إذا لم تكن موجودة (للتوافق مع قواعد البيانات القديمة)
+        try:
+            self.conn.execute("ALTER TABLE seen_files ADD COLUMN width INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self.conn.execute("ALTER TABLE seen_files ADD COLUMN height INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS resume_meta (
                 channel_id INTEGER PRIMARY KEY,
@@ -352,7 +356,8 @@ class Database:
         self.conn.commit()
 
     def buffer_insert(self, record):
-        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", record)
+        # record = (channel_id, msg_id, file_id, size, duration, width, height, md5, phash, date, type, mime, views, name)
+        self.conn.execute("INSERT OR REPLACE INTO seen_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
         self.conn.commit()
 
     def delete_msg_records(self, channel_id, msg_ids):
@@ -363,24 +368,23 @@ class Database:
         self.conn.commit()
 
     def get_all_videos(self, channel_id, min_size=0) -> List[Dict]:
-        """يجلب كل الفيديوهات للمقارنة الـ Fuzzy"""
+        """يجلب كل الفيديوهات للمقارنة الدقيقة (المدة، الحجم، الأبعاد)"""
         rows = self.conn.execute(
-            "SELECT msg_id, file_id, file_size, duration, msg_date, file_name "
+            "SELECT msg_id, file_id, file_size, duration, width, height, msg_date, file_name "
             "FROM seen_files WHERE channel_id=? AND file_type='video' AND file_size>=?",
             (channel_id, min_size)
         ).fetchall()
         return [
             {"id": r[0], "file_id": r[1], "size": r[2], "duration": r[3],
-             "date": r[4], "name": r[5], "type": "video"}
+             "width": r[4], "height": r[5], "date": r[6], "name": r[7], "type": "video"}
             for r in rows
         ]
 
     def stream_duplicates(self, channel_id, keep_strategy, min_size=0,
-                          use_md5=False, use_phash=False, use_fuzzy=False,
-                          fuzzy_threshold=0.85):
+                          use_md5=False, use_phash=False, use_exact_video=False):
         order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
         duplicates = []
-        seen_msg_ids: set = set()  # لتجنب إضافة نفس الرسالة مرتين
+        seen_msg_ids: set = set()
 
         def add_group(group, match_type):
             keeper = group[0]
@@ -426,7 +430,6 @@ class Database:
 
         # ── Layer 3: pHash بـ Hamming distance (يكتشف الصور المرفوعة من جديد) ──
         if use_phash and _HAS_IMAGEHASH:
-            # نجيب كل الصور اللي عندها phash من DB — صفر تحميل إضافي
             rows = self.conn.execute(
                 "SELECT msg_id, file_size, msg_date, file_id, duration, phash, file_type, mime_type, file_name "
                 "FROM seen_files WHERE channel_id=? AND phash IS NOT NULL "
@@ -435,7 +438,6 @@ class Database:
             ).fetchall()
 
             if rows:
-                # Union-Find لمنع التعديم الزائف
                 n   = len(rows)
                 uf2 = _UnionFind(n)
 
@@ -444,17 +446,14 @@ class Database:
                     try:    hashes.append(imagehash.hex_to_hash(r[5]))
                     except: hashes.append(None)
 
-                # O(n²) لكن على البيانات الموجودة فقط — بدون شبكة
                 for i in range(n):
                     if hashes[i] is None or rows[i][0] in seen_msg_ids: continue
                     for j in range(i + 1, n):
                         if hashes[j] is None or rows[j][0] in seen_msg_ids: continue
-                        if rows[i][3] == rows[j][3]: continue  # نفس file_id → Layer 1 يغطيه
-                        # Hamming distance ≤ 6 من أصل 64 bit — صارم (تطابق شبه تام فقط)
+                        if rows[i][3] == rows[j][3]: continue
                         if (hashes[i] - hashes[j]) <= 6:
                             uf2.union(i, j)
 
-                # اجمع المجموعات
                 groups2: Dict[int, List[int]] = {}
                 for idx in range(n):
                     root = uf2.find(idx)
@@ -462,12 +461,11 @@ class Database:
 
                 for root, members in groups2.items():
                     if len(members) < 2: continue
-                    # رتّب حسب الاستراتيجية
                     if keep_strategy == "largest":
                         members.sort(key=lambda i: rows[i][1], reverse=True)
                     elif keep_strategy == "newest":
                         members.sort(key=lambda i: rows[i][2], reverse=True)
-                    else:  # oldest
+                    else:
                         members.sort(key=lambda i: rows[i][2])
                     keeper = rows[members[0]]
                     for idx in members[1:]:
@@ -481,11 +479,10 @@ class Database:
                             "match_type": "phash"
                         })
 
-        # ── Layer 4: Fuzzy Video Matching بـ Union-Find ──
-        if use_fuzzy:
+        # ── Layer 4: Exact Video Matching (المدة + الحجم + الأبعاد متطابقة تماماً) ──
+        if use_exact_video:
             videos = self.get_all_videos(channel_id, min_size)
 
-            # رتّب حسب الاستراتيجية لتحديد الـ keeper (الأول في الترتيب)
             sort_key = {"oldest": lambda v: v["date"],
                         "newest": lambda v: v["date"],
                         "largest": lambda v: v["size"]}[keep_strategy]
@@ -495,16 +492,14 @@ class Database:
             n = len(videos)
             uf = _UnionFind(n)
 
-            # O(n²) للمقارنة لكن الـ Union-Find يمنع التعديم الزائف
             for i in range(n):
                 if videos[i]["id"] in seen_msg_ids: continue
                 for j in range(i + 1, n):
                     if videos[j]["id"] in seen_msg_ids: continue
-                    if videos[i]["file_id"] == videos[j]["file_id"]: continue  # Layer 1 يغطيه
-                    if is_surgical_duplicate(videos[i], videos[j], fuzzy_threshold):
+                    if videos[i]["file_id"] == videos[j]["file_id"]: continue
+                    if is_exact_video_duplicate(videos[i], videos[j]):
                         uf.union(i, j)
 
-            # اجمع المجموعات
             groups: Dict[int, List[int]] = {}
             for idx in range(n):
                 root = uf.find(idx)
@@ -512,7 +507,6 @@ class Database:
 
             for root, members in groups.items():
                 if len(members) < 2: continue
-                # الأول في القائمة هو الـ keeper (مرتبون مسبقاً)
                 keeper_idx  = members[0]
                 keeper_id   = videos[keeper_idx]["id"]
                 for idx in members[1:]:
@@ -530,7 +524,7 @@ class Database:
                             "id": row[0], "size": row[1], "date": row[2], "file_id": row[3],
                             "duration": row[4], "phash": row[5], "type": row[6],
                             "mime": row[7], "name": row[8], "keeper_id": keeper_id,
-                            "match_type": "fuzzy"
+                            "match_type": "exact_video"
                         })
 
         return duplicates
@@ -625,7 +619,7 @@ st.html("""
                  padding:3px 10px;border-radius:99px;letter-spacing:0.04em;margin-top:4px;">v5.0</span>
   </div>
   <p style="color:#64748b;font-size:0.88rem;margin:0;">
-    كشف المكررات عبر: File ID · MD5 · pHash · Fuzzy Video
+    كشف المكررات عبر: File ID · MD5 · pHash · Exact Video Match
   </p>
 </div>
 """)
@@ -768,46 +762,21 @@ elif st.session_state.step == 'channel':
                                         help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
 
         st.markdown("---")
-        st.subheader("🎬 Fuzzy Video Matching")
-        st.caption("يكتشف الفيديوهات المكررة حتى لو أُعيد رفعها — بناءً على المدة والحجم")
+        st.subheader("🎬 Exact Video Matching")
+        st.caption("يكتشف الفيديوهات المتطابقة تماماً (نفس المدة + الحجم + الأبعاد) حتى لو أُعيد رفعها")
 
-        use_fuzzy = st.toggle("تفعيل Fuzzy Video Matching", value=False,
-                              help="يكتشف الفيديوهات المرفوعة من جديد — scoring مرجّح: المدة 60% + الحجم 40%")
+        use_exact_video = st.toggle("تفعيل Exact Video Matching", value=False,
+                                    help="تطابق صارم: المدة، الحجم، والعرض×الارتفاع يجب أن تكون متطابقة.")
 
-        fuzzy_threshold = 0.85
-        if use_fuzzy:
+        if use_exact_video:
             st.markdown("""
-            <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:9px;
-                        padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#0369a1;">
-            ⚙️ <b>كيف يعمل؟</b> يعطي كل زوج فيديوهات score من 0→1 &nbsp;|&nbsp;
-            المدة (60%) + الحجم (40%)<br>
-            فرق المدة &gt; 3 ثوان = رفض فوري · score ≥ الحد = مكرر
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
+                        padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#166534;">
+            ✅ <b>كيف يعمل؟</b> يُعتبر الفيديو مكرراً فقط إذا تطابقت <b>المدة (بالثواني)</b> و
+            <b>الحجم (بالبايت)</b> و <b>الأبعاد (العرض×الارتفاع)</b> تماماً.<br>
+            إذا كانت الأبعاد غير متوفرة لفيديو ما، تُعطى قيمة صفرية ولن يتطابق مع فيديو له أبعاد حقيقية.
             </div>
             """, unsafe_allow_html=True)
-
-            fuzzy_threshold = st.slider(
-                "الحد الأدنى للـ Score (دقة الكشف)",
-                min_value=0.70, max_value=0.99, value=0.85, step=0.01, format="%.2f",
-                help="0.85 موصى به · ارفعه لتقليل false positives · اخفضه لكشف أكثر"
-            )
-            col_t1, col_t2, col_t3 = st.columns(3)
-            with col_t1:
-                bg = "#dcfce7" if fuzzy_threshold >= 0.85 else "#fef9c3"
-                st.html(f"""<div style="background:{bg};border-radius:8px;padding:8px;
-                            text-align:center;font-size:0.79rem;">
-                <b>المدة → score</b><br>تطابق تام → 0.60<br>فرق 1ث → 0.42<br>فرق 2-3ث → 0.18</div>""")
-            with col_t2:
-                st.html("""<div style="background:#f1f5f9;border-radius:8px;padding:8px;
-                           text-align:center;font-size:0.79rem;">
-                <b>الحجم → score</b><br>&lt;2% فرق → 0.40<br>&lt;8% فرق → 0.28<br>&lt;20% فرق → 0.16</div>""")
-            with col_t3:
-                verdict = ("🟢 صارم جداً" if fuzzy_threshold >= 0.90
-                           else "🟡 متوازن" if fuzzy_threshold >= 0.80
-                           else "🔴 متساهل")
-                st.html(f"""<div style="background:#f8fafc;border-radius:8px;padding:8px;
-                            text-align:center;font-size:0.79rem;">
-                <b>الحد الحالي</b><br>{fuzzy_threshold:.2f}<br>{verdict}</div>""")
-            st.caption("مثال: فيديو مدته 120ث وحجمه يختلف 25% → score=0.60 → لا يُعتبر مكرراً عند 0.85")
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
@@ -830,8 +799,7 @@ elif st.session_state.step == 'channel':
                         'min_size_mb': min_size_mb,
                         'compute_md5': compute_md5,
                         'compute_phash': compute_phash,
-                        'use_fuzzy': use_fuzzy,
-                        'fuzzy_threshold': fuzzy_threshold,
+                        'use_exact_video': use_exact_video,
                     }
                     st.session_state.auto_mode = auto_mode
                     if st.session_state.db_path is None:
@@ -933,7 +901,8 @@ elif st.session_state.step == 'scanning':
                     saved += 1
                     db.buffer_insert((
                         channel.id, info['id'], info['file_id'], info['size'],
-                        info['duration'], info['md5'], info['phash'], info['date'],
+                        info['duration'], info['width'], info['height'],
+                        info['md5'], info['phash'], info['date'],
                         info['type'], info['mime'], info['views'], info['name']
                     ))
                 st.session_state.total_scanned += scanned
@@ -968,8 +937,7 @@ elif st.session_state.step == 'results':
         int(params['min_size_mb'] * 1024 * 1024),
         use_md5=params.get('compute_md5', False),
         use_phash=params.get('compute_phash', False),
-        use_fuzzy=params.get('use_fuzzy', False),
-        fuzzy_threshold=params.get('fuzzy_threshold', 0.85),
+        use_exact_video=params.get('use_exact_video', False),
     )
 
     st.html(f"<h3 style='margin:0 0 16px;color:#0f172a;'>📋 {getattr(channel, 'title', str(channel.id))}</h3>")
@@ -994,7 +962,7 @@ elif st.session_state.step == 'results':
             "file_id": "🔗 File ID (Forward)",
             "md5":     "🔐 MD5",
             "phash":   "🖼️ pHash",
-            "fuzzy":   "🎬 Fuzzy Video",
+            "exact_video": "🎬 Exact Video",
         }
         summary = " · ".join(f"{badge_map.get(k,k)}: {v}" for k, v in type_counts.items())
 
@@ -1012,7 +980,7 @@ elif st.session_state.step == 'results':
         total_pages = max(1, (len(duplicates) + PAGE_SIZE - 1) // PAGE_SIZE)
         page_dups   = duplicates[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
-        badge_short = {"file_id": "🔗 Forward", "md5": "🔐 MD5", "phash": "🖼️ pHash", "fuzzy": "🎬 Fuzzy"}
+        badge_short = {"file_id": "🔗 Forward", "md5": "🔐 MD5", "phash": "🖼️ pHash", "exact_video": "🎬 Exact"}
         df = pd.DataFrame([
             {
                 "معرف": d['id'],
@@ -1034,10 +1002,9 @@ elif st.session_state.step == 'results':
         for sid in edited[edited["تحديد"] == True]["معرف"].tolist():
             st.session_state.selected_ids.add(sid)
 
-        # ── مقارنة الـ Fuzzy (بدون تحميل — روابط فقط) ──
-        fuzzy_dups = [d for d in page_dups if d.get('match_type') == 'fuzzy']
-        if fuzzy_dups:
-            # channel_id للرابط: القناة العامة = @username، الخاصة = -100xxxxxxx
+        # ── مقارنة الـ Exact Video ──
+        exact_video_dups = [d for d in page_dups if d.get('match_type') == 'exact_video']
+        if exact_video_dups:
             raw_id = getattr(channel, 'id', None)
             ch_username = getattr(channel, 'username', None)
 
@@ -1046,12 +1013,11 @@ elif st.session_state.step == 'results':
                     return f"https://t.me/{ch_username}/{msg_id}"
                 return f"https://t.me/c/{raw_id}/{msg_id}"
 
-            with st.expander(f"🔍 مقارنة الـ Fuzzy ({len(fuzzy_dups)} فيديو) — اضغط للمراجعة قبل الحذف"):
+            with st.expander(f"🔍 مقارنة الـ Exact Video ({len(exact_video_dups)} فيديو) — اضغط للمراجعة قبل الحذف"):
                 st.caption("الروابط تفتح الفيديو مباشرة في تيليجرام — لا يوجد تحميل")
-                for d in fuzzy_dups:
-                    # جلب بيانات الـ keeper من DB بدون تحميل
+                for d in exact_video_dups:
                     keeper_row = db.conn.execute(
-                        "SELECT msg_id, file_size, duration, msg_date FROM seen_files "
+                        "SELECT msg_id, file_size, duration, width, height, msg_date FROM seen_files "
                         "WHERE channel_id=? AND msg_id=?",
                         (channel.id, d['keeper_id'])
                     ).fetchone()
@@ -1068,7 +1034,8 @@ elif st.session_state.step == 'results':
 | المعرف | `{keeper_row[0]}` |
 | الحجم | {fmt_size(keeper_row[1])} |
 | المدة | {keeper_row[2]} ث |
-| التاريخ | {keeper_row[3][:10]} |
+| الأبعاد | {keeper_row[3]}×{keeper_row[4]} |
+| التاريخ | {keeper_row[5][:10]} |
 """)
                         st.link_button("▶️ فتح في تيليجرام",
                                       tg_link(d['keeper_id']),
@@ -1103,7 +1070,6 @@ elif st.session_state.step == 'results':
         st.markdown("---")
 
         # ── أزرار التحديد الذكي حسب نوع الطبقة ──
-        # نحسب الأنواع الموجودة في كل المكررات (مو بس الصفحة الحالية)
         types_present = {}
         for d in duplicates:
             mt = d.get('match_type', 'file_id')
@@ -1113,13 +1079,12 @@ elif st.session_state.step == 'results':
             "file_id": ("🔗 كل Forward",  "آمن 100% — تطابق تام",        "#f0fdf4", "#166534"),
             "md5":     ("🔐 كل MD5",      "آمن — تطابق بايتي كامل",       "#f0fdf4", "#166534"),
             "phash":   ("🖼️ كل pHash",    "تشابه بصري — راجع قبل الحذف", "#fefce8", "#854d0e"),
-            "fuzzy":   ("🎬 كل Fuzzy",    "راجع الـ expander أولاً ⬆️",   "#fff7ed", "#c2410c"),
+            "exact_video": ("🎬 كل Exact Video", "تطابق تام للمدة والحجم والأبعاد — آمن", "#f0fdf4", "#166534"),
         }
 
-        # نعرض أزرار التحديد بس للأنواع الموجودة
-        present_keys = [k for k in ["file_id", "md5", "phash", "fuzzy"] if k in types_present]
+        present_keys = [k for k in ["file_id", "md5", "phash", "exact_video"] if k in types_present]
         if present_keys:
-            btn_cols = st.columns(len(present_keys) + 1)  # +1 لزر الإلغاء
+            btn_cols = st.columns(len(present_keys) + 1)
             for i, mt in enumerate(present_keys):
                 label, tip, bg, color = type_labels[mt]
                 count = len(types_present[mt])
