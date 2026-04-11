@@ -147,12 +147,16 @@ def get_thumb(media):
         if doc and doc.thumbs: return min(doc.thumbs, key=lambda t: getattr(t, 'size', 0))
     return None
 
-# ================== Exact Video Matching ==================
+# ================== Exact Video Matching (صارم مع هامش ضئيل) ==================
 
-def is_exact_video_duplicate(a: dict, b: dict) -> bool:
+def is_exact_video_duplicate(a: dict, b: dict,
+                             duration_tolerance: float = 0.1,
+                             size_tolerance_percent: float = 1.0) -> bool:
     """
-    تطابق صارم للفيديوهات: نفس المدة، نفس الحجم، نفس الأبعاد.
-    إذا كانت الأبعاد غير متوفرة (0) فلا تطابق إلا مع فيديو آخر بدون أبعاد.
+    تطابق صارم جداً مع هامش ضئيل:
+    - المدة: فرق <= duration_tolerance (افتراضي 0.1 ثانية)
+    - الحجم: فرق <= size_tolerance_percent % (افتراضي 1%)
+    - الأبعاد: يجب أن تتطابق تماماً (أو كلاهما غير معروف)
     """
     d1 = float(a.get("duration", 0))
     d2 = float(b.get("duration", 0))
@@ -163,12 +167,24 @@ def is_exact_video_duplicate(a: dict, b: dict) -> bool:
     w2 = int(b.get("width", 0))
     h2 = int(b.get("height", 0))
 
-    # يجب أن تتوفر بيانات أساسية
     if d1 == 0 or d2 == 0 or s1 == 0 or s2 == 0:
         return False
 
-    # تطابق المدة (بالثواني) والحجم (بالبايت) والأبعاد (بالـ pixel)
-    return (d1 == d2) and (s1 == s2) and (w1 == w2) and (h1 == h2)
+    # المدة
+    if abs(d1 - d2) > duration_tolerance:
+        return False
+
+    # الحجم (نسبة مئوية)
+    size_diff = abs(s1 - s2)
+    max_size = max(s1, s2)
+    if max_size > 0 and (size_diff / max_size) * 100 > size_tolerance_percent:
+        return False
+
+    # الأبعاد: تطابق تام
+    if (w1 != w2 or h1 != h2) and not (w1 == 0 and h1 == 0 and w2 == 0 and h2 == 0):
+        return False
+
+    return True
 
 
 class _UnionFind:
@@ -381,7 +397,8 @@ class Database:
         ]
 
     def stream_duplicates(self, channel_id, keep_strategy, min_size=0,
-                          use_md5=False, use_phash=False, use_exact_video=False):
+                          use_md5=False, use_phash=False, use_exact_video=False,
+                          duration_tolerance=0.1, size_tolerance_percent=1.0):
         order = {"oldest": "msg_date ASC", "newest": "msg_date DESC", "largest": "file_size DESC"}[keep_strategy]
         duplicates = []
         seen_msg_ids: set = set()
@@ -479,7 +496,7 @@ class Database:
                             "match_type": "phash"
                         })
 
-        # ── Layer 4: Exact Video Matching (المدة + الحجم + الأبعاد متطابقة تماماً) ──
+        # ── Layer 4: Exact Video Matching (مع هامش صغير) ──
         if use_exact_video:
             videos = self.get_all_videos(channel_id, min_size)
 
@@ -497,7 +514,8 @@ class Database:
                 for j in range(i + 1, n):
                     if videos[j]["id"] in seen_msg_ids: continue
                     if videos[i]["file_id"] == videos[j]["file_id"]: continue
-                    if is_exact_video_duplicate(videos[i], videos[j]):
+                    if is_exact_video_duplicate(videos[i], videos[j],
+                                                duration_tolerance, size_tolerance_percent):
                         uf.union(i, j)
 
             groups: Dict[int, List[int]] = {}
@@ -762,21 +780,37 @@ elif st.session_state.step == 'channel':
                                         help="يكتشف الصور المتشابهة حتى لو اختلفت أبعادها.")
 
         st.markdown("---")
-        st.subheader("🎬 Exact Video Matching")
-        st.caption("يكتشف الفيديوهات المتطابقة تماماً (نفس المدة + الحجم + الأبعاد) حتى لو أُعيد رفعها")
+        st.subheader("🎬 Exact Video Matching (صارم مع هامش ضئيل)")
+        st.caption("يكتشف الفيديوهات المتطابقة تقريباً (نفس المدة والحجم والأبعاد مع تسامح بسيط جداً)")
 
         use_exact_video = st.toggle("تفعيل Exact Video Matching", value=False,
-                                    help="تطابق صارم: المدة، الحجم، والعرض×الارتفاع يجب أن تكون متطابقة.")
+                                    help="تطابق صارم جداً مع هامش صغير للمدة والحجم (الأبعاد يجب أن تتطابق تماماً).")
 
+        duration_tolerance = 0.1
+        size_tolerance_percent = 1.0
         if use_exact_video:
             st.markdown("""
             <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;
                         padding:10px 14px;margin-bottom:8px;font-size:0.84rem;color:#166534;">
-            ✅ <b>كيف يعمل؟</b> يُعتبر الفيديو مكرراً فقط إذا تطابقت <b>المدة (بالثواني)</b> و
-            <b>الحجم (بالبايت)</b> و <b>الأبعاد (العرض×الارتفاع)</b> تماماً.<br>
-            إذا كانت الأبعاد غير متوفرة لفيديو ما، تُعطى قيمة صفرية ولن يتطابق مع فيديو له أبعاد حقيقية.
+            ✅ <b>كيف يعمل؟</b> يُعتبر الفيديو مكرراً إذا كان الفرق في المدة ≤ الهامش،
+            والفرق في الحجم ≤ النسبة المحددة، والأبعاد متطابقة تماماً.<br>
+            الإعدادات الافتراضية (0.1 ث و 1%) دقيقة جداً وتلتقط التغييرات الطفيفة عند إعادة الرفع.
             </div>
             """, unsafe_allow_html=True)
+
+            col_tol1, col_tol2 = st.columns(2)
+            with col_tol1:
+                duration_tolerance = st.number_input(
+                    "📏 هامش المدة (بالثواني)",
+                    min_value=0.0, max_value=1.0, value=0.1, step=0.05,
+                    help="الفرق المسموح به في المدة. القيمة الافتراضية 0.1 ثانية (دقيقة جداً)."
+                )
+            with col_tol2:
+                size_tolerance_percent = st.number_input(
+                    "📦 هامش الحجم (%)",
+                    min_value=0.0, max_value=5.0, value=1.0, step=0.2,
+                    help="النسبة المئوية للفرق المسموح به في حجم الملف. القيمة الافتراضية 1%."
+                )
 
         st.markdown("---")
         uploaded_db = st.file_uploader("📂 رفع قاعدة بيانات سابقة (اختياري)", type=['db'])
@@ -800,6 +834,8 @@ elif st.session_state.step == 'channel':
                         'compute_md5': compute_md5,
                         'compute_phash': compute_phash,
                         'use_exact_video': use_exact_video,
+                        'duration_tolerance': duration_tolerance,
+                        'size_tolerance_percent': size_tolerance_percent,
                     }
                     st.session_state.auto_mode = auto_mode
                     if st.session_state.db_path is None:
@@ -938,6 +974,8 @@ elif st.session_state.step == 'results':
         use_md5=params.get('compute_md5', False),
         use_phash=params.get('compute_phash', False),
         use_exact_video=params.get('use_exact_video', False),
+        duration_tolerance=params.get('duration_tolerance', 0.1),
+        size_tolerance_percent=params.get('size_tolerance_percent', 1.0),
     )
 
     st.html(f"<h3 style='margin:0 0 16px;color:#0f172a;'>📋 {getattr(channel, 'title', str(channel.id))}</h3>")
@@ -1079,7 +1117,7 @@ elif st.session_state.step == 'results':
             "file_id": ("🔗 كل Forward",  "آمن 100% — تطابق تام",        "#f0fdf4", "#166534"),
             "md5":     ("🔐 كل MD5",      "آمن — تطابق بايتي كامل",       "#f0fdf4", "#166534"),
             "phash":   ("🖼️ كل pHash",    "تشابه بصري — راجع قبل الحذف", "#fefce8", "#854d0e"),
-            "exact_video": ("🎬 كل Exact Video", "تطابق تام للمدة والحجم والأبعاد — آمن", "#f0fdf4", "#166534"),
+            "exact_video": ("🎬 كل Exact Video", "تطابق دقيق جداً — آمن", "#f0fdf4", "#166534"),
         }
 
         present_keys = [k for k in ["file_id", "md5", "phash", "exact_video"] if k in types_present]
